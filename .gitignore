@@ -108,3 +108,8 @@ backups/*.sql
 *.njsproj
 *.sln
 *.sw?
+
+# Isolated browser QA output (may contain test tokens)
+qa-results/
+__pycache__/
+*.pyc

@@ -126,7 +126,7 @@ async function sendOrderConfirmation(customer, order) {
     </div>
   `);
 
-  return sendEmail({ to: customer.email, subject: `Commande #${safeOrderId} confirmée - MandeMarket`, html });
+  return sendEmail({ to: customer.email, subject: `Commande #${safeOrderId} enregistree - MandeMarket`, html });
 }
 
 // 2. Email: Mise à jour statut commande
@@ -294,7 +294,24 @@ async function sendContactMessageNotification(data) {
   return sendEmail({ to: adminEmail, subject: `[Contact Support] ${escapeHtml(data.subject)} - ${escapeHtml(data.name)}`, html });
 }
 
+// Administrative notification never includes a guest access capability.
+async function sendNewOrderNotification(order) {
+  const to = process.env.ADMIN_EMAIL;
+  if (!to) return { success: false, error: 'ADMIN_EMAIL non configure' };
+  const reference = escapeHtml(order.orderNumber || order.id);
+  const amount = Math.round(order.totalAmount / 100).toLocaleString('fr-FR');
+  const status = escapeHtml(STATUS_LABELS[order.status] || order.status);
+  const dashboard = escapeHtml(`${process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3000'}/admin/dashboard`);
+  const html = baseTemplate(`<h2>Nouvelle commande enregistree</h2>
+    <p>Reference : <strong>${reference}</strong></p>
+    <p>Montant : ${amount} FCFA. Statut : ${status}.</p>
+    <p>La reception de cette commande ne constitue pas une preuve de paiement.</p>
+    <p><a href="${dashboard}">Ouvrir l'administration</a></p>`);
+  return sendEmail({ to, subject: `Nouvelle commande ${reference} - MandeMarket`, html });
+}
+
 module.exports = {
+  sendNewOrderNotification,
   sendEmail,
   sendOrderConfirmation,
   sendOrderStatusUpdate,

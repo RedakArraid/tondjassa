@@ -68,6 +68,7 @@ class BrowserAcceptance(unittest.TestCase):
         self.page.set_default_timeout(15000)
         self.errors = []
         self.page.on("pageerror", lambda error: self.errors.append(str(error)))
+        self.page.on("response", lambda response: self.errors.append(f"HTTP {response.status} {response.url.split(chr(63))[0]}") if response.url.startswith(BASE + "/api/") and response.status >= 500 else None)
         self.context.route(EXTERNAL, lambda route: route.abort())
         self.context.tracing.start(screenshots=True, snapshots=True)
 
@@ -90,7 +91,7 @@ class BrowserAcceptance(unittest.TestCase):
         self.page.goto(BASE + ("/admin/login" if staff else "/compte/login"))
         self.page.locator('form input[type="email"]').first.fill(email)
         self.page.locator('form input[type="password"]').first.fill(password)
-        self.page.locator('form button[type="submit"]').first.click()
+        self.page.get_by_role("button", name="Se connecter", exact=True).click()
         target = "/vendeur/dashboard" if email == "qa-seller@test.invalid" else "/admin/dashboard" if staff else "/compte/dashboard"
         expect(self.page).to_have_url(re.compile(re.escape(BASE + target)))
         key = "admin_token" if staff else TOKEN_KEY
@@ -104,7 +105,8 @@ class BrowserAcceptance(unittest.TestCase):
         self.page.wait_for_function("JSON.parse(localStorage.getItem('mandemarket_cart') || '[]').length > 0")
         self.page.goto(BASE + "/checkout")
         expect(self.page.get_by_role("heading", name="Finaliser la commande")).to_be_visible()
-        expect(self.page.locator('button[type="submit"]').last).to_be_enabled()
+        expect(self.page.get_by_role("button", name="Confirmer la commande")).to_be_enabled()
+        expect(self.page.get_by_test_id("quote-total")).to_have_attribute("data-amount", "2200000")
 
     def test_01_verified_registration_recovery_and_revocation(self):
         email = "qa-registration@test.invalid"
@@ -112,7 +114,7 @@ class BrowserAcceptance(unittest.TestCase):
         for name, value in {"firstName": "Recette", "lastName": "Navigateur", "email": email,
                             "password": PASSWORD, "confirmPassword": PASSWORD}.items():
             self.page.locator('input[name="' + name + '"]').fill(value)
-        self.page.locator('form button[type="submit"]').first.click()
+        self.page.get_by_role("button", name="Créer mon compte", exact=True).click()
         expect(self.page).to_have_url(BASE + "/compte/verifier-email")
         self.assertIsNone(self.page.evaluate("key => localStorage.getItem(key)", TOKEN_KEY))
         denied = self.api("/api/account/login", method="POST", data={"email": email, "password": PASSWORD})
@@ -182,7 +184,7 @@ class BrowserAcceptance(unittest.TestCase):
     def test_03_mobile_unavailable_country_blocks_stale_quote(self):
         self.add_to_cart()
         self.page.locator('select[name="countryCode"]').select_option("NG")
-        expect(self.page.get_by_role("alert")).to_contain_text("Livraison indisponible")
+        expect(self.page.locator("p[role=alert]")).to_contain_text("Livraison indisponible")
         expect(self.page.get_by_role("button", name="Confirmer la commande")).to_be_disabled()
         expect(self.page.get_by_test_id("quote-total")).to_have_attribute("data-amount", "")
 
@@ -204,6 +206,7 @@ class BrowserAcceptance(unittest.TestCase):
         self.add_to_cart()
         self.page.goto(BASE + "/panier")
         expect(self.page.get_by_text("Article recette QA", exact=True).first).to_be_visible()
+        self.page.wait_for_load_state("networkidle")
         self.page.reload()
         expect(self.page.get_by_text("Article recette QA", exact=True).first).to_be_visible()
 
