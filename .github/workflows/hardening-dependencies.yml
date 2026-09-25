@@ -20,34 +20,20 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
-      - name: Resolve supported dependencies and lock versions
+      - name: Refresh dependency graph
         shell: bash
         run: |
           set -euo pipefail
           node <<'NODE'
           const fs = require('fs');
-          for (const dir of ['', 'backend/', 'frontend/']) {
-            const path = dir + 'package.json';
-            const p = JSON.parse(fs.readFileSync(path));
-            p.engines = { node: '>=24 <25' };
-            if (dir === 'backend/') {
-              delete p.dependencies['multer-storage-cloudinary'];
-              delete p.devDependencies.prisma;
-              Object.assign(p.dependencies, { prisma: '^6.19.0', '@prisma/client': '^6.19.0', multer: '2.4.0', cloudinary: '^2.0.0', express: '^4.21.0', nodemailer: '^7.0.0', 'express-rate-limit': '^8.0.0' });
-              p.devDependencies.eslint = '^9.0.0';
-              p.devDependencies['@eslint/js'] = '^9.0.0';
-              p.devDependencies.globals = '^16.0.0';
-            }
-            if (dir === 'frontend/') {
-              Object.assign(p.dependencies, { next: '16.3.6', react: '^19.2.0', 'react-dom': '^19.2.0', typescript: '^5.9.0' });
-              Object.assign(p.devDependencies, { 'eslint-config-next': '16.3.6', eslint: '^9.0.0', '@types/react': '^19.2.0', '@types/react-dom': '^19.2.0', '@types/node': '^24.0.0' });
-            }
-            fs.writeFileSync(path, JSON.stringify(p, null, 2) + '\n');
-          }
+          const p = JSON.parse(fs.readFileSync('backend/package.json'));
+          p.dependencies.nodemailer = '10.0.10';
+          p.overrides = { ...p.overrides, '@prisma/config': { 'deepmerge-ts': '^8.0.0' } };
+          fs.writeFileSync('backend/package.json', JSON.stringify(p, null, 2) + '\n');
           NODE
-          npm install --ignore-scripts
-          npm install --ignore-scripts --prefix backend
-          npm install --ignore-scripts --prefix frontend
+          npm update --ignore-scripts
+          npm update --ignore-scripts --prefix backend
+          npm update --ignore-scripts --prefix frontend
           cd backend && npx --no-install prisma generate
       - name: Audit resolved dependency graphs
         shell: bash
@@ -63,7 +49,7 @@ jobs:
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add package.json package-lock.json backend/package.json backend/package-lock.json frontend/package.json frontend/package-lock.json
-          git diff --cached --quiet || git commit -m 'chore(deps): Node 24, Next 16 and maintained backend dependencies'
+          git diff --cached --quiet || git commit -m 'fix(deps): remediate runtime and transitive dependency advisories'
           git push origin HEAD:feature/production-hardening-20260925
       - uses: actions/upload-artifact@v4
         if: always()
