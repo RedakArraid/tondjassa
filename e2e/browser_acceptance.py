@@ -23,6 +23,7 @@ PASSWORD = os.environ.get("E2E_PASSWORD", "")
 if len(PASSWORD) < 16:
     raise RuntimeError("E2E_PASSWORD must be generated for this isolated run")
 TOKEN_KEY = "mandemarket_customer_token"
+EXTERNAL = re.compile(r"^https?://(?!localhost:3443(?:/|$))")
 
 
 def mail_link(address, path):
@@ -60,14 +61,14 @@ class BrowserAcceptance(unittest.TestCase):
     def setUp(self):
         mobile = "mobile" in self._testMethodName
         engine = self.webkit if "webkit" in self._testMethodName else self.chromium
-        opts = self.pw.devices["iPhone 13"] if mobile else {"viewport": {"width": 1440, "height": 1000}}
+        opts = dict(self.pw.devices["iPhone 13"]) if mobile else {"viewport": {"width": 1440, "height": 1000}}
+        opts.pop("default_browser_type", None)
         self.context = engine.new_context(**opts, ignore_https_errors=True, locale="fr-FR")
         self.page = self.context.new_page()
         self.page.set_default_timeout(15000)
         self.errors = []
         self.page.on("pageerror", lambda error: self.errors.append(str(error)))
-        # Test browser traffic cannot leave the disposable environment.
-        self.context.route(re.compile(r"^https?://(?!localhost:3443(?:/|$))"), lambda route: route.abort())
+        self.context.route(EXTERNAL, lambda route: route.abort())
         self.context.tracing.start(screenshots=True, snapshots=True)
 
     def tearDown(self):
@@ -127,7 +128,7 @@ class BrowserAcceptance(unittest.TestCase):
         self.assertEqual(len(cookies), 1)
         self.assertTrue(cookies[0]["httpOnly"] and cookies[0]["secure"])
         self.assertEqual(cookies[0]["sameSite"], "Lax")
-        # An unusable access token must renew through the real HttpOnly cookie.
+        # Exercise renewal with a real refresh cookie, without waiting 15 minutes.
         self.page.evaluate("key => localStorage.setItem(key, 'invalid.expired.token')", TOKEN_KEY)
         self.page.reload()
         self.page.wait_for_function("key => { const t=localStorage.getItem(key); return t && t !== 'invalid.expired.token'; }", arg=TOKEN_KEY)
@@ -169,6 +170,7 @@ class BrowserAcceptance(unittest.TestCase):
         self.assertEqual(self.api("/api/orders/reference/" + reference).status, 404)
         link = mail_link("qa-guest@test.invalid", "/commande/")
         other = self.chromium.new_context(ignore_https_errors=True)
+        other.route(EXTERNAL, lambda route: route.abort())
         try:
             page = other.new_page()
             page.goto(link)
