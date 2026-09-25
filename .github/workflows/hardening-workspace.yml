@@ -1,0 +1,38 @@
+name: Hardening workspace (temporary)
+on:
+  push:
+    branches: [feature/production-hardening-20260925]
+    paths: [.github/workflows/hardening-workspace.yml]
+permissions:
+  contents: read
+jobs:
+  workspace:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Archive tracked sources only
+        run: git archive --format=tar.gz HEAD -o workspace.tar.gz
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hardening-source
+          path: workspace.tar.gz
+          retention-days: 1
+      - name: Prepare locked development dependencies
+        run: |
+          npm ci --ignore-scripts
+          npm ci --ignore-scripts --prefix backend
+          npm ci --ignore-scripts --prefix frontend
+          cd backend && npx --no-install prisma generate
+      - name: Archive dependencies (no credentials or environment files)
+        run: tar -czf dependencies.tar.gz node_modules backend/node_modules frontend/node_modules
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hardening-dependencies
+          path: dependencies.tar.gz
+          retention-days: 1
