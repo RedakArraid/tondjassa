@@ -13,7 +13,7 @@ services:
   # ===========================================================================
   # MandeMarket Backend
   # ===========================================================================
-  mandemarket-backend:
+  mandemarket-backend: &backend-service
     build:
       context: ./backend
       dockerfile: Dockerfile
@@ -22,6 +22,7 @@ services:
       - .env.production
     environment:
       - NODE_ENV=production
+      - TRUST_PROXY=${TRUST_PROXY:?Set the trusted proxy IP/CIDR}
       - PORT=4002
       - HOST=0.0.0.0
       - DATABASE_URL=postgresql://${MANDEMARKET_DB_USER}:${MANDEMARKET_DB_PASSWORD}@mandemarket-db:5432/${MANDEMARKET_DB_NAME}
@@ -55,8 +56,14 @@ services:
       mandemarket-redis:
         condition: service_healthy
     restart: unless-stopped
+    init: true
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
     healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:4002/health"]
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:4002/health/ready"]
       interval: 30s
       timeout: 15s
       retries: 5
@@ -66,11 +73,25 @@ services:
       - mandemarket_internal
     labels:
       - traefik.enable=true
+      - traefik.docker.network=traefik_network
       - traefik.http.routers.mandemarket-api.rule=Host(`apimandemarket.soubadigital.com`)
       - traefik.http.routers.mandemarket-api.entrypoints=websecure
       - traefik.http.routers.mandemarket-api.tls=true
       - traefik.http.routers.mandemarket-api.tls.certresolver=mytlschallenge
       - traefik.http.services.mandemarket-api.loadbalancer.server.port=4002
+
+  mandemarket-worker:
+    <<: *backend-service
+    container_name: mandemarket-worker
+    command: ["node", "scripts/worker.js"]
+    labels:
+      - traefik.enable=false
+    healthcheck:
+      test: ["CMD", "node", "-e", "const f=require('fs');process.exit(Date.now()-Number(f.readFileSync('/app/tmp/worker-heartbeat','utf8'))<300000?0:1)"]
+      interval: 60s
+      timeout: 5s
+      retries: 3
+      start_period: 180s
 
   # ===========================================================================
   # MandeMarket Frontend
@@ -100,6 +121,12 @@ services:
       mandemarket-backend:
         condition: service_healthy
     restart: unless-stopped
+    init: true
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3001"]
       interval: 30s
@@ -110,6 +137,7 @@ services:
       - traefik_network
     labels:
       - traefik.enable=true
+      - traefik.docker.network=traefik_network
       - traefik.http.routers.mandemarket-frontend.rule=Host(`mandemarket.soubadigital.com`)
       - traefik.http.routers.mandemarket-frontend.entrypoints=websecure
       - traefik.http.routers.mandemarket-frontend.tls=true
@@ -133,6 +161,12 @@ services:
       - mandemarket_postgres_data:/var/lib/postgresql/data
       - ./backend/scripts/init-db.sql:/docker-entrypoint-initdb.d/init-db.sql:ro
     restart: unless-stopped
+    init: true
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${MANDEMARKET_DB_USER:-postgres} -d ${MANDEMARKET_DB_NAME:-mandemarket}"]
       interval: 10s
@@ -154,6 +188,12 @@ services:
     volumes:
       - mandemarket_redis_data:/data
     restart: unless-stopped
+    init: true
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
     healthcheck:
       test: ["CMD", "redis-cli", "-a", "${MANDEMARKET_REDIS_PASSWORD}", "ping"]
       interval: 10s

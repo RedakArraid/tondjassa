@@ -1,4 +1,7 @@
 const db = require('../db');
+const crypto = require('node:crypto');
+const { transaction, lockOrder, lockKey, httpError } = require('./transaction');
+const Inventory = require('./inventory.service');
 const PricingService = require('./pricing.service');
 
 const ALLOWED_ORDER_TRANSITIONS = {
@@ -29,7 +32,7 @@ const ALLOWED_SHIPPING_TRANSITIONS = {
 
 function generateOrderNumber() {
   const dateStr = new Date().toISOString().slice(2, 10).replace(/-/g, '');
-  const rand = Math.random().toString(36).substring(2, 6).toUpperCase();
+  const rand = crypto.randomBytes(8).toString('hex').toUpperCase();
   return `MM-${dateStr}-${rand}`;
 }
 
@@ -37,33 +40,7 @@ class OrderService {
   /**
    * Création atomique et idempotente d'une commande via devis serveur
    */
-  static async checkoutOrder({ customerData, addressData, items, shippingMethod, promoCode, paymentMethod, idempotencyKey, reqUser, ipAddress, notes }) {
-    // 1. Contrôle d'idempotence strict (MM-BE-032)
-    if (idempotencyKey) {
-      const existingOrder = await db.order.findUnique({
-        where: { idempotencyKey },
-        include: {
-          items: true,
-          payment: true,
-          shipping: true,
-        },
-      });
-      if (existingOrder) {
-        return {
-          order: existingOrder,
-          isDuplicate: true,
-        };
-      }
-    }
-
-    // 2. Recalcul complet et infalsifiable du devis par le PricingService
-    const quote = await PricingService.calculateQuote({
-      items,
-      country: addressData.country || 'CI',
-      shippingMethod: shippingMethod || 'STANDARD',
-      promoCode,
-    });
-
+  static async checkoutOrder({ customerData, addressData, items, shippingMethod, promoCode, paymentMethod, idempotencyKey, checkoutSecret, reqUser, ipAddress, notes }) {
     // 3. Normalisation de la méthode de paiement
     const payMethodMap = {
       cash_on_delivery: 'CASH_ON_DELIVERY',
@@ -80,7 +57,26 @@ class OrderService {
     const normalizedMethod = payMethodMap[paymentMethod?.toLowerCase()] || 'CARD';
 
     // 4. Transaction PostgreSQL unifiée ($transaction)
-    const result = await db.$transaction(async (tx) => {
+    const result = await transaction(async (tx) => {
+      if (idempotencyKey) {
+        await lockKey(tx, `checkout:${idempotencyKey}`);
+        const existing = await tx.order.findUnique({ where: { idempotencyKey }, include: { items: true, payment: true, shipping: true } });
+        if (existing) {
+          const owned = reqUser?.userId && existing.userId === reqUser.userId;
+          const guest = !existing.userId && checkoutSecret && existing.checkoutSecretHash === crypto.createHash('sha256').update(checkoutSecret).digest('hex');
+          if (!owned && !guest) throw httpError('Commande non accessible', 404);
+          return { order: existing, isDuplicate: true };
+        }
+      }
+    // 2. Recalcul complet et infalsifiable du devis par le PricingService
+      const quote = await PricingService.calculateQuote({
+      items,
+      country: addressData.country || 'CI',
+      shippingMethod: shippingMethod || 'STANDARD',
+      promoCode,
+      }, tx);
+
+
       // A. Gestion sécurisée du client sans écrasement furtif (MM-BE-032)
       let customer;
       const normalizedEmail = customerData.email.toLowerCase().trim();
@@ -129,24 +125,9 @@ class OrderService {
         });
       }
 
-      // B. Réservation atomique du stock dans Inventory (MM-BE-032)
-      for (const item of quote.items) {
-        const inv = await tx.inventory.findUnique({ where: { productId: item.productId } });
-        if (!inv) {
-          throw new Error(`Inventaire manquant pour l'article ${item.name}`);
-        }
-        const available = inv.quantity - inv.reserved;
-        if (available < item.quantity) {
-          throw new Error(`Stock indisponible pour "${item.name}". Disponible : ${available}`);
-        }
-
-        await tx.inventory.update({
-          where: { productId: item.productId },
-          data: {
-            reserved: { increment: item.quantity },
-            available: { decrement: item.quantity },
-          },
-        });
+      // Guarded updates and a serializable transaction prevent overselling.
+      for (const item of [...quote.items].sort((a, b) => a.productId - b.productId)) {
+        await Inventory.reserve(tx, item.productId, item.quantity);
       }
 
       // C. Réservation de la promotion
@@ -179,6 +160,7 @@ class OrderService {
           totalAmount: quote.totalAmount,
           promotionCode: quote.appliedPromotion?.code || null,
           idempotencyKey: idempotencyKey || null,
+          checkoutSecretHash: !reqUser?.userId && checkoutSecret ? crypto.createHash('sha256').update(checkoutSecret).digest('hex') : null,
           notes: notes || null,
           customerSnapshot: {
             firstName: customerData.firstName,
@@ -253,142 +235,97 @@ class OrderService {
         },
       });
 
-      return order;
+      return { order, isDuplicate: false };
     });
 
-    return {
-      order: result,
-      isDuplicate: false,
-    };
+    return result;
   }
 
   /**
    * Transition d'état de commande selon machine d'état (MM-BE-033)
    */
-  static async transitionOrderStatus(orderId, nextStatus, { userId, reason, ipAddress } = {}) {
-    const order = await db.order.findUnique({
-      where: { id: orderId },
-      include: { items: true, payment: true },
-    });
-
-    if (!order) {
-      throw new Error('Commande introuvable');
-    }
-
-    const currentStatus = order.status;
-    const allowed = ALLOWED_ORDER_TRANSITIONS[currentStatus] || [];
-
-    if (!allowed.includes(nextStatus)) {
-      // Transition interdite -> AuditLog + Error 409
-      await db.auditLog.create({
-        data: {
-          userId: userId || null,
-          action: 'INVALID_ORDER_TRANSITION',
-          entity: 'Order',
-          entityId: order.id,
-          details: { currentStatus, attemptedStatus: nextStatus, reason },
-          ipAddress: ipAddress || null,
-        },
-      });
-
-      const err = new Error(`Transition de statut interdite de ${currentStatus} vers ${nextStatus}`);
-      err.statusCode = 409;
-      throw err;
-    }
-
-    return await db.$transaction(async (tx) => {
-      // Si la commande est annulée, libérer le stock réservé et la promotion (MM-BE-034)
-      if (nextStatus === 'CANCELLED' && ['PENDING', 'CONFIRMED'].includes(currentStatus)) {
-        for (const item of order.items) {
-          await tx.inventory.update({
-            where: { productId: item.productId },
-            data: {
-              reserved: { decrement: item.quantity },
-              available: { increment: item.quantity },
-            },
-          });
-        }
-
+  static async transitionOrderStatus(orderId, nextStatus, options = {}, existingTx) {
+    return transaction(async (tx) => {
+      await lockOrder(tx, orderId);
+      const order = await tx.order.findUnique({ where: { id: orderId }, include: { items: true, payment: true } });
+      if (!order) throw httpError('Commande introuvable', 404);
+      if (order.status === nextStatus) return order;
+      if (!(ALLOWED_ORDER_TRANSITIONS[order.status] || []).includes(nextStatus)) throw httpError(`Transition de statut interdite de ${order.status} vers ${nextStatus}`);
+      if (nextStatus === 'REFUNDED' && !options.refundConfirmed) throw httpError('Le prestataire doit confirmer le remboursement');
+      if (nextStatus === 'CONFIRMED' && order.payment?.status !== 'COMPLETED' && !['CASH_ON_DELIVERY', 'BANK_TRANSFER'].includes(order.payment?.method)) throw httpError('Paiement non confirme');
+      const sortedItems = [...order.items].sort((a, b) => a.productId - b.productId);
+      if (nextStatus === 'CANCELLED') {
+        if (order.items.some((i) => i.stockCommittedAt)) throw httpError('Des articles sont deja expedies : demander un retour');
+        for (const item of sortedItems) await Inventory.release(tx, item);
         if (order.promotionCode) {
-          const promo = await tx.promotion.findUnique({ where: { code: order.promotionCode } });
-          if (promo) {
-            await tx.promotion.update({
-              where: { id: promo.id },
-              data: { usedCount: { decrement: 1 } },
-            });
-          }
+          await tx.promotion.updateMany({ where: { code: order.promotionCode, usedCount: { gt: 0 } }, data: { usedCount: { decrement: 1 } } });
         }
-
-        // Mettre à jour le paiement si encore PENDING
-        if (order.payment && order.payment.status === 'PENDING') {
-          await tx.payment.update({
-            where: { id: order.payment.id },
-            data: { status: 'FAILED' },
-          });
+        if (order.payment?.status === 'COMPLETED') {
+          await tx.refund.upsert({ where: { orderId }, create: {
+            orderId, gateway: order.payment.gateway || 'manual', transactionId: order.payment.transactionId,
+            amount: order.totalAmount, currency: 'XOF', reason: options.reason || 'Annulation', status: 'REQUESTED',
+          }, update: {} });
+        } else if (order.payment?.status === 'PENDING') {
+          await tx.payment.update({ where: { id: order.payment.id }, data: { status: 'FAILED' } });
         }
       }
-
-      const updated = await tx.order.update({
-        where: { id: orderId },
-        data: { status: nextStatus },
-        include: { items: true, payment: true, shipping: true },
-      });
-
-      // Synchronisation du registre comptable vendeur (MM-BE-050)
-      const LedgerService = require('./ledger.service');
-      if (nextStatus === 'DELIVERED') {
-        await LedgerService.makeOrderFundsAvailable(orderId, tx);
-      } else if (nextStatus === 'REFUNDED') {
-        await LedgerService.recordOrderRefund(orderId, { reason }, tx);
-      }
-
-      await tx.auditLog.create({
-        data: {
-          userId: userId || null,
-          action: `ORDER_STATUS_${nextStatus}`,
-          entity: 'Order',
-          entityId: order.id,
-          details: { from: currentStatus, to: nextStatus, reason },
-          ipAddress: ipAddress || null,
-        },
-      });
-
+      if (nextStatus === 'SHIPPED') for (const item of sortedItems) await Inventory.ship(tx, item);
+      if (nextStatus === 'REFUNDED' && options.restock) for (const item of sortedItems) await Inventory.restock(tx, item);
+      await tx.orderItem.updateMany({ where: { orderId }, data: { fulfillmentStatus: nextStatus } });
+      const shippingStatus = { PROCESSING: 'PROCESSING', SHIPPED: 'SHIPPED', DELIVERED: 'DELIVERED', REFUNDED: 'RETURNED' }[nextStatus];
+      if (shippingStatus) await tx.shipping.updateMany({ where: { orderId }, data: { status: shippingStatus, ...(nextStatus === 'DELIVERED' ? { actualDelivery: new Date() } : {}) } });
+      const updated = await tx.order.update({ where: { id: orderId }, data: { status: nextStatus }, include: { items: true, payment: true, shipping: true } });
+      const Ledger = require('./ledger.service');
+      if (nextStatus === 'DELIVERED' && order.payment?.status === 'COMPLETED') await Ledger.makeOrderFundsAvailable(orderId, tx);
+      if (nextStatus === 'REFUNDED') await Ledger.recordOrderRefund(orderId, { reason: options.reason }, tx);
+      await tx.auditLog.create({ data: { userId: options.userId || null, action: `ORDER_STATUS_${nextStatus}`, entity: 'Order', entityId: orderId, details: { from: order.status, to: nextStatus, reason: options.reason }, ipAddress: options.ipAddress || null } });
       return updated;
+    }, existingTx);
+  }
+
+  // A seller may only advance its own lines, never all sellers' fulfillment.
+  static async transitionSellerFulfillment(orderId, sellerId, nextStatus, options = {}) {
+    if (!['PROCESSING', 'SHIPPED'].includes(nextStatus)) throw httpError('Statut vendeur interdit', 403);
+    return transaction(async (tx) => {
+      await lockOrder(tx, orderId);
+      const order = await tx.order.findUnique({ where: { id: orderId }, include: { items: true } });
+      if (!order || !order.items.some((i) => i.sellerId === sellerId)) throw httpError('Commande introuvable', 404);
+      if (!['CONFIRMED', 'PROCESSING', 'SHIPPED'].includes(order.status)) throw httpError('Commande non eligible');
+      const own = order.items.filter((i) => i.sellerId === sellerId).sort((a, b) => a.productId - b.productId);
+      for (const item of own) {
+        if (item.fulfillmentStatus === nextStatus) continue;
+        const expected = nextStatus === 'PROCESSING' ? 'CONFIRMED' : 'PROCESSING';
+        if (item.fulfillmentStatus !== expected) throw httpError('Transition logistique interdite');
+        if (nextStatus === 'SHIPPED') await Inventory.ship(tx, item);
+        await tx.orderItem.update({ where: { id: item.id }, data: {
+          fulfillmentStatus: nextStatus,
+          ...(nextStatus === 'SHIPPED' ? { carrier: options.carrier || null, trackingCode: options.trackingCode || null } : {}),
+        } });
+      }
+      const items = await tx.orderItem.findMany({ where: { orderId } });
+      const allShipped = items.every((i) => i.fulfillmentStatus === 'SHIPPED');
+      const status = allShipped ? 'SHIPPED' : 'PROCESSING';
+      await tx.order.update({ where: { id: orderId }, data: { status } });
+      await tx.shipping.updateMany({ where: { orderId }, data: { status: allShipped ? 'SHIPPED' : 'PROCESSING' } });
+      await tx.auditLog.create({ data: { userId: options.userId || null, action: `SELLER_FULFILLMENT_${nextStatus}`, entity: 'Order', entityId: orderId, details: { sellerId } } });
+      return { id: orderId, status, items: items.filter((i) => i.sellerId === sellerId) };
     });
   }
 
-  /**
-   * Expiration automatique des commandes en attente (MM-BE-034)
-   */
   static async expirePendingOrders(maxAgeMinutes = 60) {
-    const cutoffDate = new Date(Date.now() - maxAgeMinutes * 60 * 1000);
-    const expiredOrders = await db.order.findMany({
-      where: {
-        status: 'PENDING',
-        createdAt: { lt: cutoffDate },
-      },
-      select: { id: true, orderNumber: true },
-    });
-
+    const orders = await db.order.findMany({ where: { status: 'PENDING', createdAt: { lt: new Date(Date.now() - maxAgeMinutes * 60000) }, payment: { is: { method: 'CARD', status: { in: ['PENDING', 'FAILED'] } } } }, select: { id: true } });
     let expiredCount = 0;
-    for (const order of expiredOrders) {
-      try {
-        await this.transitionOrderStatus(order.id, 'CANCELLED', {
-          reason: 'Expiration automatique après délai de non-paiement',
-        });
-        expiredCount++;
-      } catch (err) {
-        console.error(`Erreur expiration commande ${order.orderNumber}:`, err.message);
-      }
+    for (const order of orders) {
+      await transaction(async (tx) => {
+        await lockOrder(tx, order.id);
+        const current = await tx.order.findUnique({ where: { id: order.id }, include: { payment: true } });
+        if (current?.status === 'PENDING' && ['PENDING', 'FAILED'].includes(current.payment?.status)) {
+          await this.transitionOrderStatus(order.id, 'CANCELLED', { reason: 'Commande abandonnee avant initiation du paiement' }, tx);
+          expiredCount++;
+        }
+      });
     }
-
-    return { expiredCount, totalFound: expiredOrders.length };
+    return { expiredCount, totalFound: orders.length };
   }
 }
-
-module.exports = {
-  OrderService,
-  ALLOWED_ORDER_TRANSITIONS,
-  ALLOWED_PAYMENT_TRANSITIONS,
-  ALLOWED_SHIPPING_TRANSITIONS,
-};
+module.exports = { OrderService, ALLOWED_ORDER_TRANSITIONS, ALLOWED_PAYMENT_TRANSITIONS, ALLOWED_SHIPPING_TRANSITIONS };

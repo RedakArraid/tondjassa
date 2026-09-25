@@ -1,5 +1,6 @@
 'use client';
 
+import { apiFetch as fetch, logoutSession } from '../../lib/api-fetch';
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { 
@@ -215,7 +216,8 @@ export default function AdminDashboard() {
     }
   };
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    try { await logoutSession('staff'); } catch (error) { window.alert(error instanceof Error ? error.message : 'Deconnexion non confirmee'); return; }
     localStorage.removeItem('admin_token');
     localStorage.removeItem('admin_user');
     setToken(null);

@@ -1,5 +1,6 @@
 'use client';
 
+import { apiFetch as fetch } from '../../lib/api-fetch';
 import { Suspense, useEffect, useState } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
@@ -76,7 +77,7 @@ function SuccessContent() {
   }, [orderId, pollCount]);
 
   const displayOrderRef = data?.orderNumber || (orderId ? `#${orderId.substring(0, 8).toUpperCase()}` : '');
-  const isConfirmed = data?.isPaid || data?.paymentStatus === 'COMPLETED' || data?.orderStatus === 'CONFIRMED';
+  const isConfirmed = data?.isPaid === true && data?.orderStatus !== 'CANCELLED';
   const isPending = !isConfirmed && (data?.paymentStatus === 'PENDING' || data?.paymentStatus === 'PROCESSING');
   const isFailed = data?.paymentStatus === 'FAILED' || data?.orderStatus === 'CANCELLED';
 

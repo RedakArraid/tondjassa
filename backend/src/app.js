@@ -10,6 +10,9 @@ const { checkConfiguration } = require('./services/cloudinary.service');
 const app = express();
 const PORT = process.env.PORT || 4002;
 const isProd = process.env.NODE_ENV === 'production';
+const config = require('./config/env');
+if (config.TRUST_PROXY) app.set('trust proxy', config.TRUST_PROXY.split(',').map((s) => s.trim()));
+app.disable('x-powered-by');
 
 console.log('\n🔍 Vérification de la configuration Cloudinary...');
 checkConfiguration();
@@ -30,7 +33,7 @@ const checkoutRoutes = require('./routes.checkout');
 const adminRoutes = require('./routes.admin');
 const contactRoutes = require('./routes.contact');
 
-const allowedOrigins = [
+const allowedOrigins = isProd ? [] : [
   'http://localhost:3000',
   'http://localhost:3001',
   'http://frontend:3000',
@@ -66,7 +69,7 @@ const RedisService = require('./services/redis.service');
 
 // Middleware RequestId & Observabilité (MM-INF-091)
 app.use((req, res, next) => {
-  req.id = req.headers['x-request-id'] || crypto.randomUUID();
+  req.id = typeof req.headers['x-request-id'] === 'string' && /^[a-zA-Z0-9_-]{1,100}$/.test(req.headers['x-request-id']) ? req.headers['x-request-id'] : crypto.randomUUID();
   res.setHeader('X-Request-ID', req.id);
   const start = Date.now();
 
@@ -77,7 +80,7 @@ app.use((req, res, next) => {
         timestamp: new Date().toISOString(),
         requestId: req.id,
         method: req.method,
-        path: req.originalUrl,
+        path: req.path,
         status: res.statusCode,
         durationMs,
         ip: req.ip,
@@ -99,7 +102,7 @@ const corsOptions = {
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin', 'X-Request-ID'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin', 'X-Request-ID', 'X-Order-Token'],
   exposedHeaders: ['Content-Length', 'Content-Type', 'X-Request-ID'],
   optionsSuccessStatus: 200,
   maxAge: 86400,
@@ -114,6 +117,7 @@ const maxRequests = Number(process.env.RATE_LIMIT_MAX_REQUESTS) || 100;
 const globalLimiter = rateLimit({
   windowMs,
   max: maxRequests,
+  skip: (req) => req.path.startsWith('/health') || /^\/api\/payment\/(webhook\/|notify\/)/.test(req.path),
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: 'Trop de requêtes, réessayez plus tard' },
@@ -147,7 +151,7 @@ app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
 
 app.use('/api/products', productRoutes);
 app.use('/api/categories', categoryRoutes);
-app.use('/api/auth', authLimiter, authRoutes);
+app.use('/api/auth', (req, res, next) => ['POST'].includes(req.method) && /^(\/login|\/signup|\/signup-seller|\/forgot-password|\/reset-password|\/resend-verification|\/verify-email)$/.test(req.path) ? authLimiter(req, res, next) : next(), authRoutes);
 app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/orders', orderRoutes);
 app.use('/api/customers', customerRoutes);
@@ -157,7 +161,7 @@ app.use('/api/sellers', sellerRoutes);
 app.use('/api/account/login', authLimiter);
 app.use('/api/account/register', authLimiter);
 app.use('/api/account', accountRoutes);
-app.use('/api/payment', paymentLimiter, paymentRoutes);
+app.use('/api/payment', (req, res, next) => /^\/(webhook\/|notify\/)/.test(req.path) ? next() : paymentLimiter(req, res, next), paymentRoutes);
 app.use('/api/shipping', shippingRoutes);
 app.use('/api/checkout', checkoutRoutes);
 app.use('/api/admin', adminRoutes);
@@ -200,7 +204,7 @@ app.get('/health/ready', async (req, res) => {
     redisStatus = redisOk ? 'CONNECTED' : 'DISCONNECTED';
   }
 
-  const isHealthy = dbStatus === 'CONNECTED';
+  const isHealthy = dbStatus === 'CONNECTED' && redisStatus !== 'DISCONNECTED';
   res.status(isHealthy ? 200 : 503).json({
     status: isHealthy ? 'READY' : 'NOT_READY',
     database: dbStatus,
@@ -237,7 +241,7 @@ app.use((err, req, res, next) => {
     return res.status(403).json({ error: 'Origine non autorisée' });
   }
   console.error(err.stack || err);
-  res.status(500).json({
+  res.status(err.statusCode || 500).json({
     error: 'Une erreur interne s\'est produite',
     message: isProd ? 'Erreur serveur' : err.message,
   });
@@ -246,14 +250,25 @@ app.use((err, req, res, next) => {
 app.use('*', (req, res) => {
   res.status(404).json({
     error: 'Route non trouvée',
-    path: req.originalUrl,
+    path: req.path,
   });
 });
 
 if (require.main === module) {
-  app.listen(PORT, '0.0.0.0', () => {
+  const server = app.listen(PORT, '0.0.0.0', () => {
     console.log(`MandeMarket Backend v2.0 — port ${PORT} (${process.env.NODE_ENV || 'development'})`);
   });
+  const shutdown = () => {
+    const deadline = setTimeout(() => process.exit(1), 25000).unref();
+    server.close(async () => {
+      await db.$disconnect();
+      RedisService.getClient()?.disconnect();
+      clearTimeout(deadline);
+      process.exit(0);
+    });
+  };
+  process.once('SIGTERM', shutdown);
+  process.once('SIGINT', shutdown);
 }
 
 module.exports = app;

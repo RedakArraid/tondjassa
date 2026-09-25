@@ -1,5 +1,6 @@
 'use client';
 
+import { apiFetch as fetch } from '../lib/api-fetch';
 import { createContext, useContext, useState, useEffect, useCallback } from 'react';
 
 const COUNTRY_KEY = 'mandemarket_country';

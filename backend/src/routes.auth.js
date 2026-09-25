@@ -7,11 +7,8 @@ const { requireAuth } = require('./middleware.auth');
 const sessionService = require('./services/session.service');
 
 // Schémas de validation Zod stricts
-const passwordRule = z
-  .string()
-  .min(8, 'Le mot de passe doit comporter au moins 8 caractères')
-  .regex(/[A-Z]/, 'Le mot de passe doit comporter au moins une lettre majuscule')
-  .regex(/[0-9]/, 'Le mot de passe doit comporter au moins un chiffre');
+const verification = require('./services/verification.service');
+const passwordRule = verification.passwordRule;
 
 const signupSchema = z.object({
   email: z.string().email('Format email invalide').toLowerCase().trim(),
@@ -43,64 +40,12 @@ const resetPasswordSchema = z.object({
   newPassword: passwordRule,
 });
 
-// POST /api/auth/signup
+// Customer registration never attaches an existing guest record before verification.
 router.post('/signup', async (req, res) => {
   try {
     const { email, password, name } = signupSchema.parse(req.body);
-
-    const existing = await db.user.findUnique({ where: { email } });
-    if (existing) {
-      return res.status(409).json({ error: 'Cet email est déjà associé à un compte.' });
-    }
-
-    const hash = await bcrypt.hash(password, 12);
-
-    // Transaction atomique : création User + rattachement Customer
-    const user = await db.$transaction(async (tx) => {
-      const newUser = await tx.user.create({
-        data: {
-          email,
-          password: hash,
-          name,
-          role: 'customer', // Rôle par défaut sécurisé (client)
-        },
-      });
-
-      // Synchroniser ou créer la fiche Customer liée
-      await tx.customer.upsert({
-        where: { email },
-        update: { userId: newUser.id, firstName: name.split(' ')[0] || name, lastName: name.split(' ').slice(1).join(' ') || '' },
-        create: {
-          userId: newUser.id,
-          email,
-          firstName: name.split(' ')[0] || name,
-          lastName: name.split(' ').slice(1).join(' ') || '',
-        },
-      });
-
-      return newUser;
-    });
-
-    const accessToken = sessionService.generateAccessToken(user);
-    const sessionData = await sessionService.createSession(user.id, req);
-
-    res.status(201).json({
-      accessToken,
-      refreshToken: sessionData.refreshToken,
-      user: {
-        id: user.id,
-        email: user.email,
-        name: user.name,
-        role: user.role,
-      },
-    });
-  } catch (err) {
-    if (err.errors) {
-      return res.status(400).json({ error: 'Validation échouée', details: err.errors });
-    }
-    console.error('Erreur signup:', err);
-    res.status(400).json({ error: err.message || 'Erreur lors de l’inscription' });
-  }
+    res.status(202).json(await verification.registerCustomer({ email, password, firstName: name.split(' ')[0], lastName: name.split(' ').slice(1).join(' ') || '-' }));
+  } catch (error) { res.status(error.statusCode || 400).json({ error: error.message }); }
 });
 
 // POST /api/auth/signup-seller
@@ -121,7 +66,7 @@ router.post('/signup-seller', async (req, res) => {
       return res.status(409).json({ error: 'Ce nom de boutique est déjà pris.' });
     }
 
-    const { user, seller } = await db.$transaction(async (tx) => {
+    const { user } = await db.$transaction(async (tx) => {
       const newUser = await tx.user.create({
         data: {
           email: data.email,
@@ -144,26 +89,8 @@ router.post('/signup-seller', async (req, res) => {
       return { user: newUser, seller: newSeller };
     });
 
-    const accessToken = sessionService.generateAccessToken(user);
-    const sessionData = await sessionService.createSession(user.id, req);
-
-    res.status(201).json({
-      accessToken,
-      refreshToken: sessionData.refreshToken,
-      user: {
-        id: user.id,
-        email: user.email,
-        name: user.name,
-        role: user.role,
-        seller: {
-          id: seller.id,
-          storeName: seller.storeName,
-          slug: seller.slug,
-          status: seller.status,
-        },
-      },
-      message: 'Compte vendeur créé. Votre boutique sera active après validation par l’administrateur.',
-    });
+    await verification.sendVerification(user);
+    res.status(202).json({ verificationRequired: true, message: 'Verifiez votre adresse email. La boutique necessite ensuite une approbation administrative.' });
   } catch (err) {
     if (err.errors) {
       return res.status(400).json({ error: 'Validation échouée', details: err.errors });
@@ -199,12 +126,11 @@ router.post('/login', async (req, res) => {
       return res.status(401).json({ error: 'Identifiants invalides.' });
     }
 
-    const accessToken = sessionService.generateAccessToken(user);
-    const sessionData = await sessionService.createSession(user.id, req);
+    if (!user.emailVerifiedAt) return res.status(403).json({ error: 'Verifiez votre email depuis /compte/verifier-email', verificationRequired: true });
+    const { accessToken } = await sessionService.issueSession(user, req, res);
 
     res.json({
       accessToken,
-      refreshToken: sessionData.refreshToken,
       token: accessToken, // Rétrocompatibilité frontend
       user: {
         id: user.id,
@@ -224,35 +150,32 @@ router.post('/login', async (req, res) => {
   }
 });
 
-// POST /api/auth/refresh (Rotation de refresh token)
 router.post('/refresh', async (req, res) => {
-  const refreshToken = req.body.refreshToken || req.headers['x-refresh-token'];
-
-  if (!refreshToken) {
-    return res.status(401).json({ error: 'Refresh token manquant' });
-  }
-
   try {
-    const result = await sessionService.rotateRefreshToken(refreshToken, req);
-    res.json({
-      accessToken: result.accessToken,
-      refreshToken: result.refreshToken,
-      token: result.accessToken, // Rétrocompatibilité
-      user: result.user,
-    });
-  } catch (err) {
-    console.warn('[AUTH] Échec rotation refresh token:', err.message);
-    res.status(401).json({ error: err.message || 'Session invalide' });
-  }
+    sessionService.checkBrowserOrigin(req);
+    const result = await sessionService.rotateRefreshToken(sessionService.readRefreshCookie(req), req);
+    sessionService.setRefreshCookie(res, result.user.role, result.refreshToken);
+    res.json({ accessToken: result.accessToken, token: result.accessToken, user: result.user });
+  } catch (error) { res.status(error.statusCode || 401).json({ error: 'Session invalide; reconnectez-vous' }); }
 });
-
-// POST /api/auth/logout
-router.post('/logout', async (req, res) => {
-  const refreshToken = req.body.refreshToken || req.headers['x-refresh-token'];
-  if (refreshToken) {
-    await sessionService.revokeSessionByToken(refreshToken).catch(() => {});
-  }
-  res.json({ message: 'Déconnexion réussie' });
+router.post('/logout', requireAuth, async (req, res) => {
+  try {
+    await sessionService.revokeSessionById(req.user.sid, req.user.userId);
+    res.clearCookie(req.user.role === 'customer' ? 'mm_refresh_customer' : 'mm_refresh_staff', { path: '/api/auth', httpOnly: true, sameSite: 'lax', secure: process.env.NODE_ENV === 'production' });
+    res.json({ success: true });
+  } catch { res.status(503).json({ error: 'Deconnexion indisponible' }); }
+});
+router.post('/verify-email', async (req, res) => {
+  try { res.json(await verification.verifyEmail(req.body.token, req.body.newPassword)); }
+  catch (error) { res.status(error.statusCode || 400).json({ error: error.name === 'ZodError' ? 'Mot de passe trop court (12 caracteres minimum)' : error.message }); }
+});
+router.post('/resend-verification', async (req, res) => {
+  try {
+    const email = verification.emailRule.parse(req.body.email);
+    const user = await db.user.findUnique({ where: { email } });
+    if (user && !user.emailVerifiedAt) await verification.sendVerification(user);
+    res.json({ message: 'Si une verification est necessaire, un message a ete envoye.' });
+  } catch (error) { res.status(error.statusCode || 400).json({ error: error.statusCode === 503 ? error.message : 'Email invalide' }); }
 });
 
 // POST /api/auth/logout-all
@@ -321,9 +244,10 @@ router.post('/forgot-password', async (req, res) => {
     const { email } = forgotPasswordSchema.parse(req.body);
     const resetInfo = await sessionService.createPasswordResetToken(email);
 
-    // En environnement de développement ou test, journaliser le token si pas d'envoi SMTP
-    if (resetInfo && process.env.NODE_ENV !== 'production') {
-      console.log(`[DEV] Jeton de réinitialisation pour ${email}: ${resetInfo.rawToken}`);
+    if (resetInfo) {
+      const url = `${process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3000'}/compte/reinitialiser-mot-de-passe#token=${resetInfo.rawToken}`;
+      const sent = await require('./services/email.service').sendPasswordResetEmail(resetInfo.email, url);
+      if (!sent.success) return res.status(503).json({ error: 'Envoi temporairement indisponible' });
     }
 
     // Réponse toujours positive pour la sécurité (anti-énumération)
@@ -350,7 +274,7 @@ router.post('/reset-password', async (req, res) => {
 router.post('/change-password', requireAuth, async (req, res) => {
   try {
     const { oldPassword, newPassword } = req.body;
-    if (!oldPassword || !newPassword || newPassword.length < 8) {
+    if (!oldPassword || !passwordRule.safeParse(newPassword).success) {
       return res.status(400).json({ error: 'L’ancien mot de passe et un nouveau mot de passe d’au moins 8 caractères sont requis.' });
     }
 
@@ -370,6 +294,7 @@ router.post('/change-password', requireAuth, async (req, res) => {
       data: { password: hashed },
     });
 
+    await sessionService.revokeAllUserSessions(user.id);
     res.json({ success: true, message: 'Mot de passe mis à jour avec succès.' });
   } catch (err) {
     console.error('Erreur change-password:', err);

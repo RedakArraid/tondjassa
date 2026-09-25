@@ -1,0 +1,48 @@
+# Overlay for compose.smoke.yml only. Never combine with production Compose.
+# TLS certificates and credentials are generated per run; Mailpit cannot relay mail.
+services:
+  backend:
+    environment: &qa_environment
+      TRUST_PROXY: uniquelocal
+      CHECKOUT_COUNTRIES: CI,FR
+      RATE_LIMIT_MAX_REQUESTS: '1000'
+      CORS_ORIGIN: https://localhost:3443
+      NEXT_PUBLIC_SITE_URL: https://localhost:3443
+      BACKEND_URL: https://localhost:3443
+      SMTP_HOST: mailpit
+      SMTP_PORT: '1025'
+      SMTP_USER: qa
+      SMTP_PASS: ${E2E_PASSWORD:?E2E_PASSWORD required}
+      EMAIL_FROM: QA <qa@test.invalid>
+      ADMIN_EMAIL: qa-admin@test.invalid
+      NODE_EXTRA_CA_CERTS: /qa-certs/cert.pem
+      PAYSTACK_SECRET_KEY: ''
+      STRIPE_SECRET_KEY: ''
+      CINETPAY_API_KEY: ''
+    volumes:
+      - ${QA_CERTS_DIR:?QA_CERTS_DIR required}:/qa-certs:ro
+      - ../e2e:/app/e2e:ro
+  worker:
+    environment:
+      <<: *qa_environment
+    volumes:
+      - ${QA_CERTS_DIR:?QA_CERTS_DIR required}:/qa-certs:ro
+  mailpit:
+    image: axllent/mailpit:v1.26
+    environment:
+      MP_SMTP_TLS_CERT: /qa-certs/cert.pem
+      MP_SMTP_TLS_KEY: /qa-certs/key.pem
+      MP_SMTP_REQUIRE_STARTTLS: 'true'
+      MP_SMTP_AUTH: qa:${E2E_PASSWORD:?E2E_PASSWORD required}
+    volumes:
+      - ${QA_CERTS_DIR:?QA_CERTS_DIR required}:/qa-certs:ro
+    ports: ['127.0.0.1:8025:8025']
+  gateway:
+    image: nginx:1.28-alpine
+    volumes:
+      - ./qa/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ${QA_CERTS_DIR:?QA_CERTS_DIR required}:/qa-certs:ro
+    ports: ['127.0.0.1:3443:443']
+    depends_on:
+      backend: { condition: service_healthy }
+      frontend: { condition: service_healthy }

@@ -4,7 +4,7 @@
 
 generator client {
   provider      = "prisma-client-js"
-  binaryTargets = ["native", "linux-musl-arm64-openssl-3.0.x"]
+  binaryTargets = ["native"]
 }
 
 datasource db {
@@ -110,6 +110,8 @@ model User {
   id                  String               @id @default(uuid())
   email               String               @unique
   password            String
+  emailVerifiedAt     DateTime?
+  emailVerificationTokens EmailVerificationToken[]
   name                String?
   role                UserRole             @default(user)
   seller              Seller?
@@ -213,6 +215,8 @@ model Order {
   customerSnapshot     Json?
   billingAddress       Json?
   shippingAddress      Json?
+  checkoutSecretHash   String?
+  refund               Refund?
   idempotencyKey       String?               @unique
   items                OrderItem[]
   payment              Payment?
@@ -234,6 +238,11 @@ model Order {
 
 // ===== ÉLÉMENTS DE COMMANDE =====
 model OrderItem {
+  fulfillmentStatus OrderStatus @default(PENDING)
+  stockCommittedAt DateTime?
+  stockRestoredAt DateTime?
+  carrier String?
+  trackingCode String?
   id               String   @id @default(uuid())
   orderId          String
   order            Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
@@ -593,4 +602,36 @@ enum SellerLedgerStatus {
   LOCKED
   CLEARED
   CANCELLED
+}
+
+model EmailVerificationToken {
+  id String @id @default(uuid())
+  userId String
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash String @unique
+  expiresAt DateTime
+  usedAt DateTime?
+  createdAt DateTime @default(now())
+  @@index([userId])
+}
+
+// Full-order refunds only. A request is not a completed provider refund.
+model Refund {
+  id String @id @default(uuid())
+  orderId String @unique
+  order Order @relation(fields: [orderId], references: [id])
+  gateway String
+  transactionId String?
+  amount Int
+  currency String
+  status String @default("REQUESTED")
+  restockRequested Boolean @default(false)
+  providerReference String?
+  reason String?
+  error String?
+  submittedAt DateTime?
+  completedAt DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  @@index([status])
 }

@@ -1,0 +1,112 @@
+name: CI MandeMarket
+on:
+  push:
+    branches: [main, dev, 'feature/**']
+  pull_request:
+    branches: [main, dev]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  quality:
+    name: Lint, types, unit tests, build and runtime audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+        with: { persist-credentials: false }
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            backend/package-lock.json
+            frontend/package-lock.json
+      - run: npm ci && npm ci --prefix backend && npm ci --prefix frontend
+      - run: cd backend && npx --no-install prisma generate
+      - run: npm run lint
+      - run: npm run type-check
+      - run: npm test
+      - run: npm run build
+      - name: Audit all shipped dependency trees
+        run: |
+          npm audit --omit=dev --audit-level=high
+          npm audit --prefix backend --omit=dev --audit-level=high
+          npm audit --prefix frontend --omit=dev --audit-level=high
+  integration:
+    name: PostgreSQL concurrency and security regressions
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: ci-only-password
+          POSTGRES_DB: tondjassa_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres -d tondjassa_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      NODE_ENV: test
+      DATABASE_URL: postgresql://postgres:ci-only-password@127.0.0.1:5432/tondjassa_test
+      TEST_DATABASE_URL: postgresql://postgres:ci-only-password@127.0.0.1:5432/tondjassa_test
+    steps:
+      - uses: actions/checkout@v5
+        with: { persist-credentials: false }
+      - uses: actions/setup-node@v5
+        with: { node-version-file: .nvmrc }
+      - run: npm ci --include=dev --prefix backend
+      - run: cd backend && npx --no-install prisma generate && npx --no-install prisma migrate deploy
+      - name: Prove migrations are repeatable
+        run: cd backend && npx --no-install prisma migrate deploy
+      - run: npm run test:integration --prefix backend
+  containers:
+    name: Production Docker images
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v5
+        with: { persist-credentials: false }
+      - run: docker build --pull -t tondjassa-backend:ci backend
+      - run: docker build --pull -t tondjassa-frontend:ci frontend
+      - name: Start production images with isolated services
+        run: |
+          printf 'CI_JWT_SECRET=%s\n' "$(openssl rand -hex 32)" > "$RUNNER_TEMP/smoke.env"
+          chmod 600 "$RUNNER_TEMP/smoke.env"
+          docker compose --env-file "$RUNNER_TEMP/smoke.env" -p tondjassa-ci -f .github/compose.smoke.yml up -d --wait --wait-timeout 150
+          curl --fail --silent http://127.0.0.1:4002/health/ready
+          curl --fail --silent http://127.0.0.1:3000/ > /dev/null
+      - name: Verify backup and restore on an isolated target
+        env:
+          ENV_FILE: ${{ runner.temp }}/smoke.env
+          COMPOSE_FILE: .github/compose.smoke.yml
+          PROJECT_NAME: tondjassa-ci
+          DB_SERVICE: postgres
+          BACKUP_DIR: ${{ runner.temp }}/backups
+          RESTORE_DATABASE: tondjassa_restore_test
+          RESTORE_CONFIRM: I_UNDERSTAND_DATA_LOSS
+        run: |
+          compose=(docker compose --env-file "$ENV_FILE" -p "$PROJECT_NAME" -f "$COMPOSE_FILE")
+          "${compose[@]}" exec -T postgres psql -U postgres -d tondjassa_smoke_test -v ON_ERROR_STOP=1 -c "CREATE TABLE smoke_backup(marker TEXT); INSERT INTO smoke_backup VALUES ('restore-proof');"
+          bash backend/scripts/backup-db.sh
+          "${compose[@]}" exec -T postgres createdb -U postgres "$RESTORE_DATABASE"
+          backup=$(find "$BACKUP_DIR" -name '*.dump' -type f -print -quit)
+          bash backend/scripts/restore-db.sh "$backup"
+          test "$("${compose[@]}" exec -T postgres psql -U postgres -d "$RESTORE_DATABASE" -Atc "SELECT count(*) FROM smoke_backup WHERE marker='restore-proof'")" = 1
+          "${compose[@]}" exec -T backend npm run production:preflight
+      - name: Container diagnostics
+        if: failure()
+        run: docker compose --env-file "$RUNNER_TEMP/smoke.env" -p tondjassa-ci -f .github/compose.smoke.yml logs --tail=100 || true
+      - name: Remove ephemeral services
+        if: always()
+        run: |
+          if [ -f "$RUNNER_TEMP/smoke.env" ]; then
+            docker compose --env-file "$RUNNER_TEMP/smoke.env" -p tondjassa-ci -f .github/compose.smoke.yml down -v --remove-orphans
+            rm -f "$RUNNER_TEMP/smoke.env"
+          fi

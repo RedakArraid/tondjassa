@@ -2,10 +2,10 @@ import { Metadata } from 'next';
 
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://mandemarket.soubadigital.com';
 
-type Props = { params: { slug: string } };
+type Props = { params: Promise<{ slug: string }> };
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
-  const url = `${SITE_URL}/vendeur/${params.slug}`;
+  const url = `${SITE_URL}/vendeur/${(await params).slug}`;
 
   const languages: Record<string, string> = {
     'fr': url, 'en': url,

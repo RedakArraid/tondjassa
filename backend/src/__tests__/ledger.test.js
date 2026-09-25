@@ -27,6 +27,7 @@ describe('Marketplace Ledger & Payout Tests (Phase 5 - MM-BE-050 / MM-BE-051 / M
       // Available = 50 000 - 10 000 - 20 000 = 20 000 FCFA (2 000 000 cents)
       expect(balances.available).toBe(2000000);
       expect(balances.currency).toBe('XOF');
+      expect(aggregateSpy.mock.calls[1][0].where.type.in).not.toContain('PAYOUT_COMPLETED');
 
       aggregateSpy.mockRestore();
       payoutAggregateSpy.mockRestore();
@@ -47,6 +48,8 @@ describe('Marketplace Ledger & Payout Tests (Phase 5 - MM-BE-050 / MM-BE-051 / M
     test('Rejects payout if amount exceeds available balance', async () => {
       const transactionSpy = jest.spyOn(db, '$transaction').mockImplementation(async (callback) => {
         const fakeTx = {
+          $queryRaw: jest.fn().mockResolvedValue([]),
+          refund: { findFirst: jest.fn().mockResolvedValue(null) },
           sellerLedgerEntry: {
             aggregate: jest.fn().mockResolvedValue({ _sum: { netAmount: 1000000 } }), // 10 000 FCFA earned
           },
@@ -73,6 +76,8 @@ describe('Marketplace Ledger & Payout Tests (Phase 5 - MM-BE-050 / MM-BE-051 / M
       const createdPayout = { id: 'payout_abc123', amount: 500000, status: 'pending' };
       const transactionSpy = jest.spyOn(db, '$transaction').mockImplementation(async (callback) => {
         const fakeTx = {
+          $queryRaw: jest.fn().mockResolvedValue([]),
+          refund: { findFirst: jest.fn().mockResolvedValue(null) },
           sellerLedgerEntry: {
             aggregate: jest.fn().mockResolvedValue({ _sum: { netAmount: 10000000 } }), // 100 000 FCFA earned
             create: jest.fn().mockResolvedValue({ id: 'entry_lock_1' }),
@@ -104,7 +109,10 @@ describe('Marketplace Ledger & Payout Tests (Phase 5 - MM-BE-050 / MM-BE-051 / M
   describe('Funds Lifecycle: Payment, Delivery, and Refund (MM-BE-050)', () => {
     test('makeOrderFundsAvailable moves entries from PENDING to AVAILABLE upon delivery', async () => {
       const fakeTx = {
+          $queryRaw: jest.fn().mockResolvedValue([]),
+          refund: { findFirst: jest.fn().mockResolvedValue(null) },
         sellerLedgerEntry: {
+          findFirst: jest.fn().mockResolvedValue(null),
           findMany: jest.fn().mockResolvedValue([
             { id: 'entry_1', status: 'PENDING', order: { orderNumber: 'ORD-999' } },
           ]),
@@ -127,7 +135,10 @@ describe('Marketplace Ledger & Payout Tests (Phase 5 - MM-BE-050 / MM-BE-051 / M
 
     test('recordOrderRefund creates negative debit entry if funds were already available', async () => {
       const fakeTx = {
+          $queryRaw: jest.fn().mockResolvedValue([]),
+          refund: { findFirst: jest.fn().mockResolvedValue(null) },
         sellerLedgerEntry: {
+          findFirst: jest.fn().mockResolvedValue(null),
           findMany: jest.fn().mockResolvedValue([
             {
               id: 'entry_avail_1',
@@ -160,6 +171,8 @@ describe('Marketplace Ledger & Payout Tests (Phase 5 - MM-BE-050 / MM-BE-051 / M
     test('failPayout releases funds by recording PAYOUT_RELEASED', async () => {
       const transactionSpy = jest.spyOn(db, '$transaction').mockImplementation(async (callback) => {
         const fakeTx = {
+          $queryRaw: jest.fn().mockResolvedValue([]),
+          refund: { findFirst: jest.fn().mockResolvedValue(null) },
           sellerPayout: {
             findUnique: jest.fn().mockResolvedValue({
               id: 'payout_fail_1',

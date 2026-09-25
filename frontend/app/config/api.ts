@@ -1,3 +1,4 @@
+import { apiFetch as fetch } from '../lib/api-fetch';
 // Configuration API centralisée pour MandeMarket
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4002';
 
@@ -810,8 +811,8 @@ export class AdminService {
     return apiService.post(`/api/admin/returns/${id}/reject`, { reason });
   }
 
-  static async processRefund(id: string) {
-    return apiService.post(`/api/admin/returns/${id}/process-refund`);
+  static async processRefund(id: string, itemsReceived = false) {
+    return apiService.post(`/api/admin/returns/${id}/process-refund`, { itemsReceived });
   }
 }
 

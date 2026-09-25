@@ -8,6 +8,8 @@ const createTransporter = () => {
     host: process.env.SMTP_HOST,
     port: parseInt(process.env.SMTP_PORT || '587', 10),
     secure: process.env.SMTP_PORT === '465',
+    requireTLS: process.env.NODE_ENV === 'production',
+    connectionTimeout: 10000, socketTimeout: 15000,
     auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
     // Strict TLS (rejectUnauthorized: false supprimé selon MM-BE-080)
   });
@@ -33,6 +35,7 @@ async function sendEmail({ to, subject, html }, maxRetries = 3) {
     attempt++;
     try {
       if (!isConfigured()) {
+        if (process.env.NODE_ENV === 'production') return { success: false, error: 'SMTP non configure' };
         console.log(`[Email] SMTP non configuré - Notification enregistrée: "${subject}" pour ${to}`);
         return { success: true, simulated: true };
       }
@@ -112,18 +115,18 @@ async function sendOrderConfirmation(customer, order) {
     <h3 style="color: #374151; margin-top: 24px; font-size: 15px;">Récapitulatif de votre panier</h3>
     ${itemsHtml}
     <div class="total-row">
-      <span>Total réglé</span>
+      <span>Total de la commande</span>
       <span>${Math.round(order.totalAmount / 100).toLocaleString('fr-FR')} FCFA</span>
     </div>
 
     <div style="margin-top: 30px; text-align: center;">
-      <a href="${process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3000'}/compte/commandes/${order.id}" class="btn">
+      <a href="${process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3000'}/commande/${order.id}#token=${require('./order-access.service').createOrderToken(order.id)}" class="btn">
         Suivre ma commande
       </a>
     </div>
   `);
 
-  return sendEmail({ to: customer.email, subject: `Commande #${safeOrderId} confirmée - MandeMarket`, html });
+  return sendEmail({ to: customer.email, subject: `Commande #${safeOrderId} enregistree - MandeMarket`, html });
 }
 
 // 2. Email: Mise à jour statut commande
@@ -159,7 +162,7 @@ async function sendOrderStatusUpdate(customer, order, newStatus) {
     ` : ''}
 
     <div style="margin-top: 28px; text-align: center;">
-      <a href="${process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3000'}/compte/commandes/${order.id}" class="btn">
+      <a href="${process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3000'}/commande/${order.id}#token=${require('./order-access.service').createOrderToken(order.id)}" class="btn">
         Consulter ma commande
       </a>
     </div>
@@ -291,7 +294,24 @@ async function sendContactMessageNotification(data) {
   return sendEmail({ to: adminEmail, subject: `[Contact Support] ${escapeHtml(data.subject)} - ${escapeHtml(data.name)}`, html });
 }
 
+// Administrative notification never includes a guest access capability.
+async function sendNewOrderNotification(order) {
+  const to = process.env.ADMIN_EMAIL;
+  if (!to) return { success: false, error: 'ADMIN_EMAIL non configure' };
+  const reference = escapeHtml(order.orderNumber || order.id);
+  const amount = Math.round(order.totalAmount / 100).toLocaleString('fr-FR');
+  const status = escapeHtml(STATUS_LABELS[order.status] || order.status);
+  const dashboard = escapeHtml(`${process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3000'}/admin/dashboard`);
+  const html = baseTemplate(`<h2>Nouvelle commande enregistree</h2>
+    <p>Reference : <strong>${reference}</strong></p>
+    <p>Montant : ${amount} FCFA. Statut : ${status}.</p>
+    <p>La reception de cette commande ne constitue pas une preuve de paiement.</p>
+    <p><a href="${dashboard}">Ouvrir l'administration</a></p>`);
+  return sendEmail({ to, subject: `Nouvelle commande ${reference} - MandeMarket`, html });
+}
+
 module.exports = {
+  sendNewOrderNotification,
   sendEmail,
   sendOrderConfirmation,
   sendOrderStatusUpdate,

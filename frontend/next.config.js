@@ -2,17 +2,10 @@
 const nextConfig = {
   // 🐳 Configuration Docker optimisée
   output: 'standalone',
+  outputFileTracingRoot: require('path').resolve(__dirname),
   
   // 🖼️ Configuration des images
   images: {
-    domains: [
-      'images.unsplash.com', 
-      'localhost', 
-      '127.0.0.1', 
-      'apimandemarket.soubadigital.com',
-      'mandemarket-backend',
-      'res.cloudinary.com' // Cloudinary CDN
-    ],
     remotePatterns: [
       {
         protocol: 'https',
@@ -49,10 +42,6 @@ const nextConfig = {
   },
   
   // 🔧 Configuration ESLint et TypeScript pour Docker
-  eslint: {
-    ignoreDuringBuilds: false,
-    dirs: ['app', 'pages', 'components', 'lib', 'src'],
-  },
   typescript: {
     ignoreBuildErrors: false,
   },
@@ -127,23 +116,7 @@ const nextConfig = {
   },
   
   // 🔧 Configuration expérimentale
-  experimental: {
-    outputFileTracingRoot: '/app',
-    serverComponentsExternalPackages: ['@prisma/client'],
-  },
-  
-  // 📦 Configuration Webpack pour Docker
-  webpack: (config, { isServer }) => {
-    // Optimisations pour l'environnement containerisé
-    if (isServer) {
-      config.externals = config.externals || [];
-      config.externals.push('@prisma/client');
-    }
-    
-    return config;
-  },
-  
-  // 🌍 Variables d'environnement publiques
+  // Public build configuration
   env: {
     CUSTOM_KEY: 'mandemarket',
     DOCKER_ENV: process.env.DOCKER_ENV || 'true',
@@ -157,7 +130,7 @@ const nextConfig = {
   trailingSlash: false,
   
   // 📱 Configuration PWA (si nécessaire)
-  swcMinify: true,
+
 }
 
 module.exports = nextConfig

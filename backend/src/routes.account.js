@@ -1,83 +1,30 @@
 const express = require('express');
 const { z } = require('zod');
 const bcrypt = require('bcryptjs');
-const jwt = require('jsonwebtoken');
 const router = express.Router();
-const { JWT_SECRET } = require('./config/env');
 const db = require('./db');
 
-// Middleware customer auth
-const requireCustomerAuth = async (req, res, next) => {
-  const token = req.headers.authorization?.split(' ')[1];
-  if (!token) return res.status(401).json({ error: 'Non authentifié' });
-  try {
-    const decoded = jwt.verify(token, JWT_SECRET);
-    if (decoded.type !== 'customer') return res.status(403).json({ error: 'Accès refusé' });
-    req.customerId = decoded.customerId;
-    req.customerEmail = decoded.email;
-    req.userId = decoded.userId;
-    if (!req.userId) {
-      const cust = await db.customer.findUnique({ where: { id: req.customerId }, select: { userId: true } });
-      if (cust?.userId) req.userId = cust.userId;
-    }
-    next();
-  } catch { res.status(403).json({ error: 'Token invalide ou session expirée' }); }
-};
+const { requireCustomerAuth } = require('./middleware.auth');
+const sessionService = require('./services/session.service');
+const verification = require('./services/verification.service');
+const { OrderService } = require('./services/order.service');
 
-// POST /register
 router.post('/register', async (req, res) => {
-  try {
-    const { firstName, lastName, email, password, phone } = z.object({
-      firstName: z.string().min(1), lastName: z.string().min(1),
-      email: z.string().email(), password: z.string().min(6),
-      phone: z.string().optional()
-    }).parse(req.body);
-
-    const existingUser = await db.user.findUnique({ where: { email } });
-    if (existingUser) return res.status(409).json({ error: 'Email déjà utilisé' });
-
-    const hash = await bcrypt.hash(password, 12);
-    const user = await db.user.create({
-      data: { email, password: hash, name: `${firstName} ${lastName}`, role: 'customer' }
-    });
-
-    const customer = await db.customer.upsert({
-      where: { email },
-      create: { email, firstName, lastName, phone, userId: user.id },
-      update: { firstName, lastName, phone: phone || undefined, userId: user.id }
-    });
-
-    const token = jwt.sign(
-      { type: 'customer', customerId: customer.id, email, userId: user.id },
-      JWT_SECRET, { expiresIn: '30d' }
-    );
-    res.status(201).json({ token, customer: { id: customer.id, firstName: customer.firstName, lastName: customer.lastName, email: customer.email, phone: customer.phone, loyaltyPoints: customer.loyaltyPoints, totalSpent: customer.totalSpent } });
-  } catch (err) {
-    if (err.name === 'ZodError') return res.status(400).json({ error: 'Données invalides', details: err.errors });
-    res.status(500).json({ error: err.message || 'Erreur serveur' });
-  }
+  try { res.status(202).json(await verification.registerCustomer(req.body)); }
+  catch (error) { res.status(error.statusCode || 400).json({ error: error.name === 'ZodError' ? 'Nom, email ou mot de passe invalide (12 caracteres minimum)' : error.message }); }
 });
-
-// POST /login
 router.post('/login', async (req, res) => {
   try {
-    const { email, password } = z.object({ email: z.string().email(), password: z.string().min(1) }).parse(req.body);
-    const user = await db.user.findUnique({ where: { email } });
-    if (!user) return res.status(401).json({ error: 'Email ou mot de passe invalide' });
-    if (user.role !== 'customer') return res.status(403).json({
-      error: 'Ce compte n\'est pas un compte client. Connectez-vous sur /admin/login pour les comptes admin, manager et vendeur.',
-      redirectTo: '/admin/login'
-    });
-    const valid = await bcrypt.compare(password, user.password);
-    if (!valid) return res.status(401).json({ error: 'Email ou mot de passe invalide' });
-    const customer = await db.customer.findUnique({ where: { email } });
-    if (!customer) return res.status(404).json({ error: 'Compte client non trouvé' });
-    const token = jwt.sign({ type: 'customer', customerId: customer.id, email, userId: user.id }, JWT_SECRET, { expiresIn: '30d' });
-    res.json({ token, customer: { id: customer.id, firstName: customer.firstName, lastName: customer.lastName, email: customer.email, phone: customer.phone, loyaltyPoints: customer.loyaltyPoints, totalSpent: customer.totalSpent } });
-  } catch (err) {
-    if (err.name === 'ZodError') return res.status(400).json({ error: 'Données invalides', details: err.errors });
-    res.status(500).json({ error: err.message || 'Erreur serveur' });
-  }
+    const data = z.object({ email: verification.emailRule, password: z.string().min(1).max(72) }).parse(req.body);
+    const user = await db.user.findUnique({ where: { email: data.email }, include: { customer: true, seller: true } });
+    if (!user || !await bcrypt.compare(data.password, user.password)) return res.status(401).json({ error: 'Identifiants invalides' });
+    if (user.role !== 'customer') return res.status(403).json({ error: 'Ce compte n est pas un compte client. Utilisez /admin/login.', redirectTo: '/admin/login' });
+    if (!user.emailVerifiedAt) return res.status(403).json({ error: 'Verifiez votre email depuis /compte/verifier-email', verificationRequired: true });
+    if (!user.customer || user.customer.status === 'deleted') return res.status(403).json({ error: 'Compte client indisponible' });
+    const tokens = await sessionService.issueSession(user, req, res);
+    const { id, firstName, lastName, email, phone, loyaltyPoints, totalSpent } = user.customer;
+    res.json({ ...tokens, customer: { id, firstName, lastName, email, phone, loyaltyPoints, totalSpent } });
+  } catch (error) { res.status(error.statusCode || 400).json({ error: 'Connexion impossible' }); }
 });
 
 // GET /me
@@ -129,7 +76,7 @@ router.put('/password', requireCustomerAuth, async (req, res) => {
   try {
     const { currentPassword, newPassword } = z.object({
       currentPassword: z.string().min(1),
-      newPassword: z.string().min(6),
+      newPassword: verification.passwordRule,
     }).parse(req.body);
 
     let user = null;
@@ -247,73 +194,14 @@ router.get('/orders/:id', requireCustomerAuth, async (req, res) => {
   } catch { res.status(500).json({ error: 'Erreur serveur' }); }
 });
 
-// POST /orders/:id/cancel - Annulation éligible par le client
+// All cancellation paths share the same inventory/payment transaction.
 router.post('/orders/:id/cancel', requireCustomerAuth, async (req, res) => {
   try {
-    const order = await db.order.findFirst({
-      where: { id: req.params.id, customerId: req.customerId },
-      include: { items: true, payment: true },
-    });
-
-    if (!order) {
-      return res.status(404).json({ error: 'Commande non trouvée' });
-    }
-
-    if (!['PENDING', 'CONFIRMED'].includes(order.status)) {
-      return res.status(400).json({
-        error: `Impossible d'annuler une commande au statut '${order.status}'. Seules les commandes en attente ou confirmées peuvent être annulées.`,
-      });
-    }
-
-    await db.$transaction(async (tx) => {
-      // 1. Statut commande -> CANCELLED
-      await tx.order.update({
-        where: { id: order.id },
-        data: { status: 'CANCELLED' },
-      });
-
-      // 2. Rétablir le stock produit et inventaire
-      for (const item of order.items) {
-        await tx.product.update({
-          where: { id: item.productId },
-          data: { stock: { increment: item.quantity } },
-        });
-        await tx.inventory.updateMany({
-          where: { productId: item.productId },
-          data: {
-            quantity: { increment: item.quantity },
-            available: { increment: item.quantity },
-          },
-        });
-      }
-
-      // 3. Si paiement réussi, marquer remboursable ou initié
-      if (order.payment && order.payment.status === 'completed') {
-        await tx.payment.update({
-          where: { id: order.payment.id },
-          data: { status: 'refunded' },
-        });
-      }
-
-      // 4. Notification d'audit si applicable
-      if (req.userId) {
-        await tx.auditLog.create({
-          data: {
-            userId: req.userId,
-            action: 'CUSTOMER_ORDER_CANCELLED',
-            entity: 'Order',
-            entityId: order.id,
-            details: { previousStatus: order.status, reason: req.body?.reason || 'Annulé par le client' },
-          },
-        });
-      }
-    });
-
-    res.json({ success: true, message: 'Commande annulée et stock rétabli avec succès' });
-  } catch (err) {
-    console.error('Erreur annulation commande:', err);
-    res.status(500).json({ error: err.message || 'Erreur serveur' });
-  }
+    const order = await db.order.findFirst({ where: { id: req.params.id, customerId: req.customerId }, select: { id: true } });
+    if (!order) return res.status(404).json({ error: 'Commande introuvable' });
+    const updated = await OrderService.transitionOrderStatus(order.id, 'CANCELLED', { userId: req.userId, reason: String(req.body?.reason || 'Annulation client').slice(0, 500) });
+    res.json({ success: true, status: updated.status, message: 'Commande annulee. Tout paiement recu fera l objet d un remboursement suivi separement.' });
+  } catch (error) { res.status(error.statusCode || 500).json({ error: error.message }); }
 });
 
 // POST /orders/:id/return-request

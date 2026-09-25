@@ -1,5 +1,6 @@
 'use client';
 
+import { apiFetch as fetch } from '../../lib/api-fetch';
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
@@ -187,7 +188,7 @@ export default function LoginPage() {
                   'Se connecter'
                 )}
               </button>
-            </form>
+            </form><div className="mt-4 text-sm flex gap-4"><a href="/compte/mot-de-passe-oublie">Mot de passe oublie</a><a href="/compte/verifier-email">Verifier mon email</a></div>
 
             <p className="text-center text-sm text-gray-500 mt-6">
               Pas encore de compte ?{' '}

@@ -1,4 +1,5 @@
 const db = require('../db');
+const { detectRegion, resolveCountryCode, EUR_XOF_RATE } = require('../utils/region');
 
 const SHIPPING_RATES = {
   STANDARD: {
@@ -34,24 +35,29 @@ class PricingService {
    * Calcul d'un devis immuable et déterministe
    * Unique source de vérité des prix de commande
    */
-  static async calculateQuote({ items, country = 'CI', shippingMethod = 'STANDARD', promoCode = null }) {
+  static async calculateQuote({ items, country = 'CI', shippingMethod = 'STANDARD', promoCode = null }, tx = db) {
     if (!Array.isArray(items) || items.length === 0) {
       throw new Error('Le panier doit contenir au moins un article');
     }
 
+    country = resolveCountryCode(country);
+    if (!country) throw new Error('Pays invalide');
+    const allowed = (process.env.CHECKOUT_COUNTRIES || 'CI,FR,BE,DE,IT,ES,SN,ML,BF,TG,BJ').split(',');
+    if (!allowed.includes(country)) throw new Error('Livraison indisponible pour ce pays');
+    if (items.length > 100) throw new Error('Panier trop volumineux');
     const validatedItems = [];
     let subtotalAmount = 0;
 
     // 1. Récupération et vérification en base de chaque produit
     for (const item of items) {
-      const productId = parseInt(item.productId, 10);
-      const quantity = parseInt(item.quantity, 10);
+      const productId = Number(item.productId);
+      const quantity = Number(item.quantity);
 
-      if (isNaN(productId) || isNaN(quantity) || quantity <= 0) {
+      if (!Number.isSafeInteger(productId) || !Number.isSafeInteger(quantity) || quantity <= 0 || quantity > 99) {
         throw new Error('Quantité ou identifiant de produit invalide');
       }
 
-      const product = await db.product.findUnique({
+      const product = await tx.product.findUnique({
         where: { id: productId },
         include: {
           inventory: true,
@@ -86,7 +92,7 @@ class PricingService {
       const lineTotal = unitPrice * quantity;
       subtotalAmount += lineTotal;
 
-      const commissionRate = product.seller ? (product.seller.commissionRate || 10) : 10;
+      const commissionRate = product.seller ? (product.seller.commissionRate ?? 10) : 10;
       const commissionAmount = Math.round((lineTotal * commissionRate) / 100);
       const sellerEarnings = lineTotal - commissionAmount;
 
@@ -129,7 +135,7 @@ class PricingService {
 
     if (promoCode && typeof promoCode === 'string' && promoCode.trim().length > 0) {
       const code = promoCode.trim().toUpperCase();
-      const promotion = await db.promotion.findUnique({
+      const promotion = await tx.promotion.findUnique({
         where: { code },
       });
 
@@ -167,9 +173,10 @@ class PricingService {
     // 5. Total final inviolable
     const totalAmount = Math.max(0, subtotalAmount + shippingCost + taxAmount - discountAmount);
 
+    if (!Number.isSafeInteger(totalAmount) || totalAmount <= 0 || totalAmount > 2147483647) throw new Error('Montant de commande hors limites');
     return {
-      currency: 'XOF',
-      exchangeRate: 1.0,
+      currency: detectRegion(country) === 'europe' ? 'EUR' : 'XOF',
+      exchangeRate: detectRegion(country) === 'europe' ? EUR_XOF_RATE : 1.0,
       subtotalAmount,
       shippingCost,
       taxAmount,

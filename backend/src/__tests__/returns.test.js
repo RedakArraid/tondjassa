@@ -1,125 +1,25 @@
-const mockDb = {
-  returnRequest: {
-    findUnique: jest.fn(),
-    update: jest.fn(),
-    create: jest.fn(),
-    findMany: jest.fn(),
-  },
-  order: {
-    findUnique: jest.fn(),
-    update: jest.fn(),
-  },
-  product: {
-    update: jest.fn(),
-  },
-  inventory: {
-    updateMany: jest.fn(),
-  },
-  auditLog: {
-    create: jest.fn(),
-  },
-  $transaction: jest.fn((callback) => callback(mockDb)),
-};
-
-jest.mock('../db', () => mockDb);
-
-const mockLedgerService = {
-  recordRefund: jest.fn(),
-};
-jest.mock('../services/ledger.service', () => mockLedgerService);
-
-describe('Gestion des Retours et Remboursements (MM-BE-072 / MM-QA-090)', () => {
-  beforeEach(() => {
-    jest.clearAllMocks();
+const Inventory = require('../services/inventory.service');
+describe('Refund inventory operations', () => {
+  test('restock restores physical and available units once, not reserved units', async () => {
+    const tx = { inventory: { update: jest.fn(), findUnique: jest.fn().mockResolvedValue({ available: 10 }) },
+      orderItem: { update: jest.fn() }, product: { update: jest.fn() } };
+    const item = { id: 'item', productId: 1, quantity: 2, stockCommittedAt: new Date(), stockRestoredAt: null };
+    await Inventory.restock(tx, item);
+    expect(tx.inventory.update).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ quantity: { increment: 2 }, available: { increment: 2 } }) }));
+    expect(tx.orderItem.update).toHaveBeenCalledWith(expect.objectContaining({ data: { stockRestoredAt: expect.any(Date) } }));
+    await Inventory.restock(tx, { ...item, stockRestoredAt: new Date() });
+    expect(tx.inventory.update).toHaveBeenCalledTimes(1);
   });
-
-  describe('Validation et cycle de vie d\'un retour', () => {
-    it('interdit le remboursement d\'un retour déjà traité (completed)', async () => {
-      mockDb.returnRequest.findUnique.mockResolvedValue({
-        id: 'ret-1',
-        status: 'completed',
-        orderId: 'ord-1',
-      });
-
-      const ret = await mockDb.returnRequest.findUnique({ where: { id: 'ret-1' } });
-      expect(ret.status).toBe('completed');
-    });
-
-    it('rétablit le stock en magasin et en inventaire lors du remboursement', async () => {
-      const mockReturn = {
-        id: 'ret-2',
-        status: 'approved',
-        orderId: 'ord-2',
-        order: {
-          id: 'ord-2',
-          totalAmount: 1500000,
-          items: [
-            { productId: 50, quantity: 2 },
-            { productId: 51, quantity: 1 },
-          ],
-        },
-      };
-
-      mockDb.returnRequest.findUnique.mockResolvedValue(mockReturn);
-      mockDb.returnRequest.update.mockResolvedValue({ id: 'ret-2', status: 'completed' });
-      mockDb.order.update.mockResolvedValue({ id: 'ord-2', status: 'REFUNDED' });
-
-      // Exécution de la logique transactionnelle
-      await mockDb.$transaction(async (tx) => {
-        await tx.returnRequest.update({
-          where: { id: mockReturn.id },
-          data: { status: 'completed' },
-        });
-
-        await tx.order.update({
-          where: { id: mockReturn.orderId },
-          data: { status: 'REFUNDED' },
-        });
-
-        for (const item of mockReturn.order.items) {
-          await tx.product.update({
-            where: { id: item.productId },
-            data: { stock: { increment: item.quantity } },
-          });
-
-          await tx.inventory.updateMany({
-            where: { productId: item.productId },
-            data: {
-              quantity: { increment: item.quantity },
-              available: { increment: item.quantity },
-            },
-          });
-        }
-
-        await mockLedgerService.recordRefund(
-          mockReturn.orderId,
-          mockReturn.order.totalAmount,
-          `Retour accepté #${mockReturn.id}`
-        );
-      });
-
-      // Assertions
-      expect(mockDb.returnRequest.update).toHaveBeenCalledWith({
-        where: { id: 'ret-2' },
-        data: { status: 'completed' },
-      });
-      expect(mockDb.order.update).toHaveBeenCalledWith({
-        where: { id: 'ord-2' },
-        data: { status: 'REFUNDED' },
-      });
-      expect(mockDb.product.update).toHaveBeenCalledWith({
-        where: { id: 50 },
-        data: { stock: { increment: 2 } },
-      });
-      expect(mockDb.inventory.updateMany).toHaveBeenCalledWith({
-        where: { productId: 50 },
-        data: { quantity: { increment: 2 }, available: { increment: 2 } },
-      });
-      expect(mockLedgerService.recordRefund).toHaveBeenCalledWith(
-        'ord-2',
-        1500000,
-        'Retour accepté #ret-2'
-      );
-    });
+  test('cancellation does not invent physical stock', async () => {
+    const tx = { inventory: { updateMany: jest.fn().mockResolvedValue({ count: 1 }), findUnique: jest.fn().mockResolvedValue({ available: 10 }) },
+      orderItem: { update: jest.fn() }, product: { update: jest.fn() } };
+    await Inventory.release(tx, { id: 'item', productId: 1, quantity: 2 });
+    const changes = tx.inventory.updateMany.mock.calls[0][0].data;
+    expect(changes).not.toHaveProperty('quantity');
+    expect(changes.reserved).toEqual({ decrement: 2 });
+    expect(changes.available).toEqual({ increment: 2 });
+  });
+  test('inconsistent reservation is rejected, not silently made negative', async () => {
+    await expect(Inventory.release({ inventory: { updateMany: jest.fn().mockResolvedValue({ count: 0 }) } }, { id: 'i', productId: 1, quantity: 2 })).rejects.toThrow('Reservation incoherente');
   });
 });

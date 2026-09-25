@@ -40,7 +40,7 @@ export default function RegisterPage() {
     if (!form.lastName.trim()) return 'Le nom est requis.';
     if (!form.email.trim()) return "L'email est requis.";
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email)) return "L'email n'est pas valide.";
-    if (form.password.length < 6) return 'Le mot de passe doit contenir au moins 6 caractères.';
+    if (form.password.length < 12) return 'Le mot de passe doit contenir au moins 12 caractères.';
     if (form.password !== form.confirmPassword) return 'Les mots de passe ne correspondent pas.';
     return null;
   };
@@ -62,7 +62,7 @@ export default function RegisterPage() {
         password: form.password,
         phone: form.phone.trim() || undefined,
       });
-      router.push('/compte/dashboard');
+      router.push('/compte/verifier-email');
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erreur lors de l'inscription");
     } finally {
@@ -189,7 +189,7 @@ export default function RegisterPage() {
                     name="password"
                     value={form.password}
                     onChange={handleChange}
-                    placeholder="Minimum 6 caractères"
+                    placeholder="Minimum 12 caractères"
                     required
                     className="w-full pl-10 pr-4 py-3 border-2 border-gray-200 rounded-xl text-gray-900 placeholder-gray-400 focus:outline-none focus:border-orange-400 transition-colors"
                   />

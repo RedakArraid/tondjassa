@@ -224,6 +224,7 @@ router.post('/', requireAuth, requireProductWrite, async (req, res) => {
         data: {
           ...data,
           sku: generatedSku,
+          stock: initialStock,
           sellerId,
         },
         include: {
@@ -312,21 +313,13 @@ router.put('/:id', requireAuth, requireProductWrite, async (req, res) => {
       }
     }
     
-    const product = await db.product.update({ 
-      where: { id }, 
-      data,
-      include: {
-        category: {
-          select: {
-            id: true,
-            name: true,
-            slug: true,
-            description: true
-          }
-        }
-      }
+    const product = await require('./services/transaction').transaction(async (tx) => {
+      const { stock, ...fields } = data;
+      if (stock !== undefined) await require('./services/inventory.service').setPhysical(tx, id, stock);
+      return tx.product.update({ where: { id }, data: fields,
+        include: { category: { select: { id: true, name: true, slug: true, description: true } } } });
     });
-    
+
     res.json(product);
   } catch (err) {
     console.error('Erreur mise à jour produit:', err);

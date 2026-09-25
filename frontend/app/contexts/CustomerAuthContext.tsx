@@ -1,5 +1,6 @@
 'use client';
 
+import { apiFetch as fetch, logoutSession } from '../lib/api-fetch';
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 
 const API = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4002';
@@ -108,13 +109,11 @@ export function CustomerAuthProvider({ children }: { children: React.ReactNode }
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || "Erreur lors de l'inscription");
-    localStorage.setItem(TOKEN_KEY, data.token);
-    setCustomer(data.customer);
+    // Registration only sends verification instructions, never authenticates.
   }, []);
 
   const logout = useCallback(() => {
-    localStorage.removeItem(TOKEN_KEY);
-    setCustomer(null);
+    void logoutSession('customer').then(() => setCustomer(null)).catch((error) => window.alert(error.message));
   }, []);
 
   return (

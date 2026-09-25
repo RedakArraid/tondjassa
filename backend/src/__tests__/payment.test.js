@@ -37,11 +37,11 @@ describe('Payment Engine Tests (Phase 4 - MM-BE-040 / MM-BE-041 / MM-BE-042)', (
       expect(isValid).toBe(false);
     });
 
-    test('normalizePhone formats Côte d Ivoire numbers to 225 format', () => {
+    test('provider codes match Paystack CIV documentation', () => {
       const { OPERATOR_SLUG } = require('../services/paystack.service');
       expect(OPERATOR_SLUG['mtn_momo']).toBe('mtn');
       expect(OPERATOR_SLUG['wave']).toBe('wave');
-      expect(OPERATOR_SLUG['orange_money']).toBe('airtel');
+      expect(OPERATOR_SLUG['orange_money']).toBe('orange');
     });
   });
 
