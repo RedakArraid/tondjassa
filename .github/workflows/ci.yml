@@ -1,53 +1,77 @@
 name: CI MandeMarket
-
 on:
   push:
-    branches:
-      - main
-      - dev
-      - 'feature/**'
+    branches: [main, dev, 'feature/**']
   pull_request:
-    branches:
-      - main
-      - dev
-
+    branches: [main, dev]
+  workflow_dispatch:
+permissions:
+  contents: read
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
-
 jobs:
-  quality-checks:
-    name: Lint, Types, Tests & Builds
+  quality:
+    name: Lint, types, unit tests, build and runtime audit
     runs-on: ubuntu-latest
-
+    timeout-minutes: 20
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js 20
-        uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+        with: { persist-credentials: false }
+      - uses: actions/setup-node@v5
         with:
-          node-version: 20
-          cache: 'npm'
-
-      - name: Install dependencies
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            backend/package-lock.json
+            frontend/package-lock.json
+      - run: npm ci && npm ci --prefix backend && npm ci --prefix frontend
+      - run: cd backend && npx --no-install prisma generate
+      - run: npm run lint
+      - run: npm run type-check
+      - run: npm test
+      - run: npm run build
+      - name: Audit all shipped dependency trees
         run: |
-          npm ci
-          cd backend && npm ci
-          cd ../frontend && npm ci
-
-      - name: Generate Prisma Client
-        run: |
-          cd backend && npx prisma generate
-
-      - name: Lint (Backend & Frontend)
-        run: npm run lint
-
-      - name: Type-Check (Backend & Frontend)
-        run: npm run type-check
-
-      - name: Unit Tests (Backend & Frontend)
-        run: npm run test
-
-      - name: Production Build (Backend & Frontend)
-        run: npm run build
+          npm audit --omit=dev --audit-level=high
+          npm audit --prefix backend --omit=dev --audit-level=high
+          npm audit --prefix frontend --omit=dev --audit-level=high
+  integration:
+    name: PostgreSQL concurrency and security regressions
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: ci-only-password
+          POSTGRES_DB: tondjassa_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres -d tondjassa_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      NODE_ENV: test
+      DATABASE_URL: postgresql://postgres:ci-only-password@127.0.0.1:5432/tondjassa_test
+      TEST_DATABASE_URL: postgresql://postgres:ci-only-password@127.0.0.1:5432/tondjassa_test
+    steps:
+      - uses: actions/checkout@v5
+        with: { persist-credentials: false }
+      - uses: actions/setup-node@v5
+        with: { node-version-file: .nvmrc }
+      - run: npm ci --include=dev --prefix backend
+      - run: cd backend && npx --no-install prisma generate && npx --no-install prisma migrate deploy
+      - name: Prove migrations are repeatable
+        run: cd backend && npx --no-install prisma migrate deploy
+      - run: npm run test:integration --prefix backend
+  containers:
+    name: Production Docker images
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v5
+        with: { persist-credentials: false }
+      - run: docker build --pull -t tondjassa-backend:ci backend
+      - run: docker build --pull -t tondjassa-frontend:ci frontend

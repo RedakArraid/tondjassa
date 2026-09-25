@@ -15,9 +15,9 @@ jobs:
         with:
           ref: feature/production-hardening-20260925
           fetch-depth: 2
-      - name: Verify base and apply hash-checked source changes
+      - name: Verify and apply source changes (workflows managed separately)
         env:
-          EXPECTED_PARENT: db36bc14cb97abf367f0b77343ad655763cd7d60
+          EXPECTED_PARENT: 6229c31b612fb9d4d9e6c0b1e8432caa3ef0016a
         run: |
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
           test "$(git rev-parse HEAD^)" = "$EXPECTED_PARENT"
@@ -38,6 +38,9 @@ jobs:
               target = root / relative
               assert not target.is_symlink()
               before = target.read_bytes() if target.exists() else b''
+              if str(relative).startswith('.github/workflows/'):
+                  assert hashlib.sha256(before).hexdigest() == change['sha256'], 'Workflow not applied by authorized connector'
+                  continue
               assert hashlib.sha256(before).hexdigest() == change['base'], 'Base mismatch: ' + str(relative)
               lines = before.decode('utf-8').splitlines(keepends=True)
               for start, end, replacement in reversed(change['ops']):
@@ -50,11 +53,10 @@ jobs:
               target.parent.mkdir(parents=True, exist_ok=True)
               target.write_bytes(data)
           shutil.rmtree(root / '.hardening')
-          for name in ['hardening-workspace.yml', 'hardening-dependencies.yml', 'apply-hardening.yml']:
-              (root / '.github/workflows' / name).unlink(missing_ok=True)
-          print('Verified and applied', len(outputs), 'source changes; temporary transfer files removed.')
+          print('Verified and applied', len(outputs), 'source changes.')
           PY
           git diff --check
+          test -z "$(git diff --name-only -- .github/workflows)"
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add -A
