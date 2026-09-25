@@ -12,9 +12,21 @@ export default function AccountRecovery({ mode }: { mode: 'verify' | 'reset' | '
   const [message, setMessage] = useState('');
   const [busy, setBusy] = useState(false);
   useEffect(() => {
-    const value = new URLSearchParams(window.location.hash.slice(1)).get('token');
-    if (value) { setToken(value); window.history.replaceState(null, '', window.location.pathname); }
-  }, []);
+    // Opening an emailed link in an existing tab can be a same-document
+    // navigation: React does not remount, so listen for the new fragment too.
+    const consumeLink = () => {
+      const value = new URLSearchParams(window.location.hash.slice(1)).get('token');
+      if (!value) return;
+      setToken(value);
+      setPassword('');
+      setMessage('');
+      // Keep Next.js history state intact and remove the token from the URL.
+      window.history.replaceState(window.history.state, '', window.location.pathname + window.location.search);
+    };
+    consumeLink();
+    window.addEventListener('hashchange', consumeLink);
+    return () => window.removeEventListener('hashchange', consumeLink);
+  }, [mode]);
   const completing = !!token && mode !== 'forgot';
   const title = mode === 'verify' ? 'Verifier mon adresse email' : 'Recuperer mon compte';
   async function submit(event: React.FormEvent) {
