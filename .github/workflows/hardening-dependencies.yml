@@ -1,0 +1,79 @@
+name: Refresh hardening dependencies (temporary)
+on:
+  push:
+    branches: [feature/production-hardening-20260925]
+    paths: [.github/workflows/hardening-dependencies.yml]
+permissions:
+  contents: write
+concurrency:
+  group: hardening-dependencies
+  cancel-in-progress: false
+jobs:
+  refresh:
+    if: github.repository == 'RedakArraid/tondjassa' && github.ref == 'refs/heads/feature/production-hardening-20260925'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/production-hardening-20260925
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Resolve supported dependencies and lock versions
+        shell: bash
+        run: |
+          set -euo pipefail
+          node <<'NODE'
+          const fs = require('fs');
+          for (const dir of ['', 'backend/', 'frontend/']) {
+            const path = dir + 'package.json';
+            const p = JSON.parse(fs.readFileSync(path));
+            p.engines = { node: '>=24 <25' };
+            if (dir === 'backend/') {
+              delete p.dependencies['multer-storage-cloudinary'];
+              delete p.devDependencies.prisma;
+              Object.assign(p.dependencies, { prisma: '^6.19.0', '@prisma/client': '^6.19.0', multer: '2.4.0', cloudinary: '^2.0.0', express: '^4.21.0', nodemailer: '^7.0.0', 'express-rate-limit': '^8.0.0' });
+              p.devDependencies.eslint = '^9.0.0';
+              p.devDependencies['@eslint/js'] = '^9.0.0';
+              p.devDependencies.globals = '^16.0.0';
+            }
+            if (dir === 'frontend/') {
+              Object.assign(p.dependencies, { next: '16.3.6', react: '^19.2.0', 'react-dom': '^19.2.0', typescript: '^5.9.0' });
+              Object.assign(p.devDependencies, { 'eslint-config-next': '16.3.6', eslint: '^9.0.0', '@types/react': '^19.2.0', '@types/react-dom': '^19.2.0', '@types/node': '^24.0.0' });
+            }
+            fs.writeFileSync(path, JSON.stringify(p, null, 2) + '\n');
+          }
+          NODE
+          npm install --ignore-scripts
+          npm install --ignore-scripts --prefix backend
+          npm install --ignore-scripts --prefix frontend
+          cd backend && npx --no-install prisma generate
+      - name: Audit resolved dependency graphs
+        shell: bash
+        run: |
+          mkdir -p dependency-audits
+          npm audit --json > dependency-audits/root.json || test "$?" = 1
+          npm audit --prefix backend --json > dependency-audits/backend.json || test "$?" = 1
+          npm audit --prefix frontend --json > dependency-audits/frontend.json || test "$?" = 1
+          tar -czf maintained-dependencies.tar.gz node_modules backend/node_modules frontend/node_modules
+          tar -czf maintained-manifests.tar.gz package.json package-lock.json backend/package.json backend/package-lock.json frontend/package.json frontend/package-lock.json dependency-audits
+      - name: Commit lockfiles only to hardening branch
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add package.json package-lock.json backend/package.json backend/package-lock.json frontend/package.json frontend/package-lock.json
+          git diff --cached --quiet || git commit -m 'chore(deps): Node 24, Next 16 and maintained backend dependencies'
+          git push origin HEAD:feature/production-hardening-20260925
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: maintained-dependencies
+          path: maintained-dependencies.tar.gz
+          retention-days: 1
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: maintained-manifests
+          path: maintained-manifests.tar.gz
+          retention-days: 1
