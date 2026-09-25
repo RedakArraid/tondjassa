@@ -5,18 +5,15 @@
   "private": true,
   "scripts": {
     "install:all": "npm install && cd frontend && npm install && cd ../backend && npm install",
-    
     "dev": "concurrently \"npm run dev:backend\" \"npm run dev:frontend\"",
     "dev:frontend": "cd frontend && npm run dev",
     "dev:backend": "cd backend && npm run dev",
-    
     "docker:up": "docker compose up -d",
     "docker:up:build": "docker compose up -d --build",
     "docker:down": "docker compose down",
     "docker:logs": "docker compose logs -f",
     "docker:reset": "docker compose down -v && docker compose up -d --build",
     "docker:status": "docker compose ps",
-
     "docker:build": "docker compose build --no-cache",
     "docker:setup": "chmod +x start-complete.sh && ./start-complete.sh",
     "docker:restart": "docker compose restart",
@@ -24,53 +21,40 @@
     "docker:logs:frontend": "docker compose logs -f frontend",
     "docker:logs:postgres": "docker compose logs -f postgres",
     "docker:logs:redis": "docker compose logs -f redis",
-
     "docker:clean": "docker compose down -v --rmi all --remove-orphans",
     "docker:force-recreate": "docker compose up -d --force-recreate",
-    
     "docker:exec:backend": "docker compose exec backend sh",
     "docker:exec:frontend": "docker compose exec frontend sh",
     "docker:exec:postgres": "docker compose exec postgres psql -U postgres -d mandemarket",
-
     "docker:health": "docker compose ps",
     "docker:migrate": "docker compose exec backend npx prisma migrate deploy",
     "docker:debug": "docker compose logs --tail=50 && docker compose ps",
-    
     "setup:docker": "npm run docker:build && npm run docker:up && npm run docker:wait && npm run docker:migrate",
     "docker:wait": "echo 'Attente des services...' && sleep 60",
     "setup:dev": "npm run install:all",
-    
     "fix:docker": "npm run docker:down && docker system prune -f && docker network prune -f && npm run docker:up",
-    
     "build": "npm run build:backend && npm run build:frontend",
     "build:frontend": "cd frontend && npm run build",
     "build:backend": "cd backend && npm run build",
-    
     "start": "docker compose up -d",
     "stop": "docker compose down",
-    
     "test": "npm run test:backend && npm run test:frontend",
     "test:frontend": "cd frontend && npm test",
     "test:backend": "cd backend && npm test",
-    
     "lint": "npm run lint:backend && npm run lint:frontend",
     "lint:frontend": "cd frontend && npm run lint",
     "lint:backend": "cd backend && npm run lint",
-    
     "migrate:deploy": "cd backend && npm run migrate:deploy",
     "seed:dev": "cd backend && npm run seed:dev",
     "reset:demo": "cd backend && npm run reset:demo",
     "db:studio": "cd backend && npx prisma studio",
     "db:backup": "docker compose exec postgres pg_dump -U postgres mandemarket > backup_$(date +%Y%m%d_%H%M%S).sql",
-    
     "clean": "rm -rf frontend/.next frontend/node_modules backend/node_modules node_modules",
     "fresh-install": "npm run clean && npm run install:all",
-    
     "type-check": "npm run type-check:frontend && npm run type-check:backend",
     "type-check:frontend": "cd frontend && npm run type-check",
     "type-check:backend": "cd backend && npm run type-check",
     "format": "cd frontend && npx prettier --write . && cd ../backend && npx prettier --write .",
-    
     "monitor": "docker stats mandemarket-frontend mandemarket-backend mandemarket-postgres mandemarket-redis",
     "backup:volumes": "docker run --rm -v mandemarket_postgres_data:/data -v $(pwd):/backup alpine tar czf /backup/postgres_backup_$(date +%Y%m%d_%H%M%S).tar.gz -C /data ."
   },
@@ -101,9 +85,6 @@
   },
   "license": "MIT",
   "engines": {
-    "node": ">=18.0.0",
-    "npm": ">=8.0.0",
-    "docker": ">=20.0.0",
-    "docker-compose": ">=2.0.0"
+    "node": ">=24 <25"
   }
 }
