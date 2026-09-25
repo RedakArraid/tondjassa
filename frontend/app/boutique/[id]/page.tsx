@@ -1,3 +1,4 @@
+import { apiFetch as fetch } from '../../lib/api-fetch';
 import { Metadata } from 'next';
 import { notFound } from 'next/navigation';
 import ProductClient from './ProductClient';
@@ -35,14 +36,14 @@ async function getSimilarProducts(categoryId: string, excludeId: string) {
 
 // ── Metadata dynamique — Google voit le vrai titre + description + image ──
 export async function generateMetadata(
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ): Promise<Metadata> {
-  const product = await getProduct(params.id);
+  const product = await getProduct((await params).id);
   if (!product) return { title: 'Produit introuvable | MandeMarket' };
 
   const title       = product.name;
   const description = product.description?.slice(0, 160) ?? '';
-  const url         = `${SITE_URL}/boutique/${params.id}`;
+  const url         = `${SITE_URL}/boutique/${(await params).id}`;
   const image       = product.image;
 
   return {
@@ -70,9 +71,9 @@ export async function generateMetadata(
 
 // ── Page (server component) ──
 export default async function ProductDetailPage(
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
-  const product = await getProduct(params.id);
+  const product = await getProduct((await params).id);
 
   if (!product) notFound();
 

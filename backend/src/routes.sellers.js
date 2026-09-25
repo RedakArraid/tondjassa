@@ -516,30 +516,8 @@ router.put('/me/products/:id/stock', requireAuth, requireSeller, async (req, res
       return res.status(404).json({ error: 'Produit introuvable ou non autorisé' });
     }
 
-    const updated = await db.$transaction(async (tx) => {
-      await tx.product.update({
-        where: { id },
-        data: { stock: qty },
-      });
-
-      const inv = await tx.inventory.upsert({
-        where: { productId: id },
-        create: {
-          productId: id,
-          quantity: qty,
-          reserved: 0,
-          available: qty,
-          lowStockThreshold: parseInt(lowStockThreshold, 10) || 5,
-        },
-        update: {
-          quantity: qty,
-          available: qty,
-          lowStockThreshold: parseInt(lowStockThreshold, 10) || 5,
-        },
-      });
-
-      return inv;
-    });
+    const updated = await require('./services/transaction').transaction((tx) =>
+      require('./services/inventory.service').setPhysical(tx, id, qty, Number(lowStockThreshold)));
 
     res.json({ success: true, stock: qty, inventory: updated });
   } catch (error) {
@@ -618,8 +596,7 @@ router.get('/me/orders', requireAuth, requireSeller, async (req, res) => {
         where,
         include: {
           customer: { select: { firstName: true, lastName: true, phone: true, email: true } },
-          shippingAddress: true,
-          items: {
+            items: {
             where: { sellerId: req.seller.id },
             include: { product: { select: { id: true, name: true, sku: true, image: true } } },
           },
@@ -636,7 +613,7 @@ router.get('/me/orders', requireAuth, requireSeller, async (req, res) => {
       const sellerTotal = o.items.reduce((sum, it) => sum + it.totalPrice, 0);
       const sellerEarnings = o.items.reduce((sum, it) => sum + (it.sellerEarnings || it.totalPrice), 0);
       return {
-        ...o,
+        ...require('./services/order-access.service').publicOrder(o),
         sellerTotal,
         sellerEarnings,
       };
@@ -664,12 +641,10 @@ router.get('/me/orders/:id', requireAuth, requireSeller, async (req, res) => {
       where: { id: req.params.id },
       include: {
         customer: true,
-        shippingAddress: true,
         items: {
           where: { sellerId: req.seller.id },
           include: { product: true },
         },
-        statusHistory: { orderBy: { createdAt: 'desc' } },
       },
     });
 
@@ -681,7 +656,7 @@ router.get('/me/orders/:id', requireAuth, requireSeller, async (req, res) => {
     const sellerEarnings = order.items.reduce((sum, it) => sum + (it.sellerEarnings || it.totalPrice), 0);
 
     res.json({
-      ...order,
+      ...require('./services/order-access.service').publicOrder(order),
       sellerTotal,
       sellerEarnings,
     });
@@ -694,71 +669,16 @@ router.get('/me/orders/:id', requireAuth, requireSeller, async (req, res) => {
 // PUT /api/sellers/me/orders/:id/status - Action logistique vendeur (préparation, expédition)
 router.put('/me/orders/:id/status', requireAuth, requireSeller, async (req, res) => {
   try {
-    const { status, carrierName, trackingNumber, note } = req.body;
-    const OrderService = require('./services/order.service');
-
-    const order = await db.order.findUnique({
-      where: { id: req.params.id },
-      include: { items: { where: { sellerId: req.seller.id } } },
+    const { status, carrierName, trackingNumber, note } = z.object({
+      status: z.enum(['PROCESSING', 'SHIPPED']), carrierName: z.string().max(100).optional(),
+      trackingNumber: z.string().max(100).optional(), note: z.string().max(500).optional(),
+    }).parse(req.body);
+    const { OrderService } = require('./services/order.service');
+    const order = await OrderService.transitionSellerFulfillment(req.params.id, req.seller.id, status, {
+      userId: req.user.userId, reason: note, carrier: carrierName, trackingCode: trackingNumber,
     });
-
-    if (!order || order.items.length === 0) {
-      return res.status(404).json({ error: 'Commande introuvable pour votre boutique' });
-    }
-
-    // Le vendeur a le droit de passer de CONFIRMED -> PROCESSING et PROCESSING -> SHIPPED
-    if (!['PROCESSING', 'SHIPPED'].includes(status)) {
-      return res.status(403).json({ error: 'Seuls les statuts PROCESSING et SHIPPED sont autorisés par le vendeur' });
-    }
-
-    const updated = await OrderService.transitionOrderStatus(
-      req.params.id,
-      status,
-      {
-        userId: req.user.userId,
-        reason: note || `Mis à jour par le vendeur ${req.seller.storeName}`,
-      }
-    );
-
-    // Mettre à jour les informations de transport si expédié
-    if (status === 'SHIPPED') {
-      if (carrierName || trackingNumber) {
-        await db.shipping.updateMany({
-          where: { orderId: req.params.id },
-          data: {
-            carrier: carrierName || 'Transporteur local',
-            trackingNumber: trackingNumber || null,
-            status: 'IN_TRANSIT',
-            shippedAt: new Date(),
-          },
-        });
-      }
-
-      // Notifier le client par email
-      try {
-        const orderData = await db.order.findUnique({
-          where: { id: req.params.id },
-          include: { customer: true },
-        });
-        if (orderData?.customer?.email) {
-          const emailService = require('./services/email.service');
-          emailService.sendShippingNotification(orderData.customer.email, {
-            orderNumber: orderData.orderNumber || orderData.id,
-            trackingNumber: trackingNumber || 'Suivi local',
-            carrier: carrierName || 'Transporteur local',
-            estimatedDelivery: '3-5 jours ouvrés',
-          }).catch(e => console.warn('[Email] Notification expédition échouée:', e.message));
-        }
-      } catch (err) {
-        console.warn('[Email] Erreur lookup commande pour notification expédition:', err.message);
-      }
-    }
-
-    res.json({ success: true, order: updated });
-  } catch (error) {
-    console.error('Erreur transition statut commande vendeur:', error);
-    res.status(error.statusCode || 500).json({ error: error.message || 'Erreur mise à jour commande' });
-  }
+    res.json({ success: true, order });
+  } catch (error) { res.status(error.statusCode || 400).json({ error: error.message }); }
 });
 
 // GET /api/sellers/me/orders/:id/packing-slip - Bordereau d'expédition imprimable
@@ -768,7 +688,6 @@ router.get('/me/orders/:id/packing-slip', requireAuth, requireSeller, async (req
       where: { id: req.params.id },
       include: {
         customer: true,
-        shippingAddress: true,
         items: {
           where: { sellerId: req.seller.id },
           include: { product: true },

@@ -1,3 +1,5 @@
+> **Release candidate:** see [production evidence](docs/RAPPORT_RECETTE_FINALE.md) and [runbook](docs/DEPLOYMENT_RUNBOOK.md). All CI and external acceptance gates must pass before live payments.
+
 # MandeMarket
 
 Marketplace e-commerce **full-stack** : catalogue multi-vendeurs, panier, checkout, paiements (selon configuration), espace client, administration et espace vendeur.  

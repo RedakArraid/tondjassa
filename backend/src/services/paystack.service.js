@@ -14,23 +14,8 @@ function getHeaders() {
   };
 }
 
-// Normaliser un numéro de téléphone CI au format international Paystack
-// Ex: "0703000000" → "2250703000000", "+2250703000000" → "2250703000000"
-function normalizePhone(phone) {
-  if (!phone) return null;
-  const digits = phone.replace(/\D/g, '');
-  if (digits.startsWith('225')) return digits;
-  if (digits.length === 10) return `225${digits}`; // CI local
-  return digits;
-}
-
 // Mapper les opérateurs mandemarket → slug Paystack mobile money
-const OPERATOR_SLUG = {
-  'mtn_momo':     'mtn',
-  'orange_money': 'airtel', // Orange CI utilise le canal Airtel sur Paystack
-  'wave':         'wave',
-  'moov_money':   'moov',
-};
+const OPERATOR_SLUG = { mtn_momo: 'mtn', orange_money: 'orange', wave: 'wave' }; // Paystack official CIV provider codes.
 
 /**
  * Initialiser une transaction Paystack.
@@ -42,11 +27,11 @@ const OPERATOR_SLUG = {
  * @param {string} [params.mobilePhone]     — numéro Mobile Money (optionnel)
  * @param {string} [params.operatorGateway] — 'mtn_momo' | 'orange_money' | 'wave' | 'moov_money'
  */
-async function initializeTransaction({ orderId, amount, email, callbackUrl, mobilePhone, operatorGateway }) {
+async function initializeTransaction({ orderId, amount, email, callbackUrl, operatorGateway, reference }) {
   if (!isConfigured() || /VOTRE|CHANGEZ|xxxx/i.test(process.env.PAYSTACK_SECRET_KEY || '')) {
     throw new Error('Paystack non configuré : renseignez PAYSTACK_SECRET_KEY (clé sk_test_… réelle) dans .env');
   }
-  const reference = `MM-${orderId.substring(0, 8).toUpperCase()}-${Date.now()}`;
+  reference = reference || `MM-${orderId}`;
   const providerSlug = OPERATOR_SLUG[operatorGateway] ?? null;
 
   const body = {
@@ -56,19 +41,14 @@ async function initializeTransaction({ orderId, amount, email, callbackUrl, mobi
     reference,
     callback_url: callbackUrl,
     metadata: { orderId, source: 'mandemarket', operator: operatorGateway ?? 'paystack' },
-    channels: providerSlug ? ['mobile_money'] : ['mobile_money', 'card', 'bank'],
+    channels: providerSlug ? ['mobile_money'] : ['mobile_money', 'card'],
   };
 
-  // Pré-remplir le numéro si on connaît l'opérateur et le téléphone
-  if (providerSlug && mobilePhone) {
-    const normalized = normalizePhone(mobilePhone);
-    if (normalized) {
-      body.mobile_money = { phone: normalized, provider: providerSlug };
-    }
-  }
+  // Hosted checkout selects the operator; mobile_money belongs to Charge API, not initialize.
 
   const response = await fetch(`${PAYSTACK_BASE}/transaction/initialize`, {
     method: 'POST',
+    signal: AbortSignal.timeout(15000),
     headers: getHeaders(),
     body: JSON.stringify(body),
   });
@@ -86,7 +66,7 @@ async function initializeTransaction({ orderId, amount, email, callbackUrl, mobi
 async function verifyTransaction(reference) {
   const response = await fetch(
     `${PAYSTACK_BASE}/transaction/verify/${encodeURIComponent(reference)}`,
-    { headers: getHeaders() }
+    { headers: getHeaders(), signal: AbortSignal.timeout(15000) }
   );
   return await response.json();
 }
@@ -97,7 +77,8 @@ function verifyWebhookSignature(rawBody, signature) {
     .createHmac('sha512', process.env.PAYSTACK_SECRET_KEY)
     .update(rawBody)
     .digest('hex');
-  return hash === signature;
+  return typeof signature === 'string' && /^[0-9a-f]{128}$/i.test(signature) &&
+    crypto.timingSafeEqual(Buffer.from(hash, 'hex'), Buffer.from(signature, 'hex'));
 }
 
 module.exports = {

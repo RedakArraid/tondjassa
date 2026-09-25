@@ -13,7 +13,9 @@ const envSchema = z.object({
   RATE_LIMIT_WINDOW_MS: z.coerce.number().default(15 * 60 * 1000),
   RATE_LIMIT_MAX_REQUESTS: z.coerce.number().default(100),
   
-  // Médias (Cloudinary)
+  TRUST_PROXY: z.string().optional(),
+  CHECKOUT_COUNTRIES: z.string().optional(),
+  // Medias (Cloudinary)
   CLOUDINARY_CLOUD_NAME: z.string().optional(),
   CLOUDINARY_API_KEY: z.string().optional(),
   CLOUDINARY_API_SECRET: z.string().optional(),
@@ -69,12 +71,18 @@ function loadConfig() {
 
   const env = result.data;
 
-  // Validation supplémentaire en production
   if (env.NODE_ENV === 'production') {
-    if (env.JWT_SECRET.includes('changeme') || env.JWT_SECRET.includes('secret-key-change')) {
-      console.error('❌ ERREUR CRITIQUE : Le JWT_SECRET en production utilise une valeur par défaut !');
-      process.exit(1);
+    const missing = [];
+    if (env.JWT_SECRET.length < 32 || /changeme|change|default|test|dev-jwt/i.test(env.JWT_SECRET)) missing.push('JWT_SECRET fort (32 caracteres minimum)');
+    for (const field of ['TRUST_PROXY', 'CHECKOUT_COUNTRIES', 'SMTP_HOST', 'SMTP_USER', 'SMTP_PASS', 'CLOUDINARY_CLOUD_NAME', 'CLOUDINARY_API_KEY', 'CLOUDINARY_API_SECRET']) {
+      if (!env[field]) missing.push(field);
     }
+    for (const field of ['NEXT_PUBLIC_SITE_URL', 'BACKEND_URL']) {
+      try { if (new URL(env[field]).protocol !== 'https:') missing.push(field + ' HTTPS'); } catch { missing.push(field); }
+    }
+    if (!process.env.CORS_ORIGIN || env.CORS_ORIGIN.split(',').some((o) => !o.trim().startsWith('https://'))) missing.push('CORS_ORIGIN HTTPS');
+    if (env.TRUST_PROXY && /^(true|false|\*|\d+)$/i.test(env.TRUST_PROXY)) missing.push('TRUST_PROXY doit contenir les IP/CIDR des proxies, pas true ni un nombre de sauts');
+    if (missing.length) throw new Error('Configuration de production incomplete: ' + missing.join(', '));
   }
 
   return env;

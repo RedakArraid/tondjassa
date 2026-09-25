@@ -1,95 +1,132 @@
-# Guide de Déploiement en Production et Exploitation MandeMarket (MM-INF-101 & MM-MGR-102)
+# Tondjassa - deployment and recovery runbook
 
-Ce guide décrit la séquence opérationnelle rigoureuse pour déployer la version finale de MandeMarket sur l'infrastructure de production Docker / Traefik.
+This branch is a release candidate, not an authorization to open real payments.
+Use one exact, reviewed commit after all three CI jobs are green. No workflow
+in this repository deploys to production. Never deploy an unreviewed branch tip.
 
----
+## Compatibility and required setup
 
-## 1. Pré-requis de Déploiement
+- Node.js 24 is used in CI and both images. Run `npm ci` from each lockfile.
+- The additive migration introduces email verification, scoped guest order access,
+  item fulfillment/stock markers and a durable refund record.
+- All old JWTs are intentionally rejected. Existing users, including administrators,
+  must request an email verification link, prove ownership and choose a password.
+  Test SMTP delivery and the administrator recovery path **before** the change.
+- `SMTP_PASS` is the password variable. Configure authenticated SMTP, TLS, the From
+  domain, SPF/DKIM/DMARC and a real support address. There is no production fake mail.
+- Copy `env.production.example` into an untracked `.env.production` and replace
+  every placeholder. Set `MANDEMARKET_CORS_ORIGIN`, `NEXT_PUBLIC_SITE_URL`,
+  `BACKEND_URL`, database/Redis credentials, a strong `MANDEMARKET_JWT_SECRET`,
+  Cloudinary and only the payment providers actually contracted and tested.
+- `TRUST_PROXY` is an explicit comma-separated list of proxy IPs/CIDRs. Discover
+  the actual Traefik path; do not use `true`, a wildcard, or a hop count. Do not
+  expose the backend port publicly. Test distinct client IPs behind Traefik.
+- `CHECKOUT_COUNTRIES` is an explicit list such as `CI,FR`. Enable only countries
+  for which shipping, tax, currency, returns and the payment contract are validated.
+- The Compose stack uses existing external volumes named `root_mandemarket_*`
+  and an existing `traefik_network`. Verify ownership and names before starting.
+  Do not create empty replacements for an existing production database.
+- Preserve the former image IDs and a verified backup. Record the commit, image
+  digests and schema version for every release. Keep `SEED_DATA=false`.
 
-Avant d'initier le déploiement sur le serveur cible :
-1. Clés d'API live configurées dans le gestionnaire de secrets :
-   - CinetPay (`CINETPAY_API_KEY`, `CINETPAY_SITE_ID`, `CINETPAY_SECRET_KEY`)
-   - Paystack (`PAYSTACK_SECRET_KEY`, `PAYSTACK_PUBLIC_KEY`)
-   - Stripe (`STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`)
-   - Cloudinary (`CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, `CLOUDINARY_API_SECRET`)
-   - SMTP Transactionnel (`SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`)
-2. Vérifier que les noms d'hôtes DNS pointent correctement vers le serveur Traefik :
-   - Frontend : `mandemarket.soubadigital.com`
-   - Backend API : `apimandemarket.soubadigital.com`
+## Repeatable commands (run from repository root)
 
----
+Use this exact prefix for every Compose invocation:
 
-## 2. Procédure Pas à Pas de Déploiement
-
-### Étape 1 : Sauvegarde de sécurité pré-déploiement
 ```bash
-./backend/scripts/backup-db.sh
+dc() { docker compose --env-file .env.production -p mandemarket-prod -f docker-compose.prod.yml "$@"; }
 ```
 
-### Étape 2 : Récupération de la branche de release
+1. Restore a copy of the current database into an isolated preproduction environment.
+   Do not run integration tests on that copy if it contains personal data. Integration
+   fixtures truncate only a database explicitly named `*_test` with `NODE_ENV=test`.
+2. Reconcile historical stock and financial records **before** enabling writes.
+   Existing incorrect balances are not rewritten automatically by the migration.
+3. Put the live application and worker in maintenance; stop accepting new orders.
+   Take a verified pre-change backup with the current database still running:
+
 ```bash
-git checkout feature/finalisation-production
-git pull origin feature/finalisation-production
+BACKUP_DIR=/secure/backups/tondjassa ./backend/scripts/backup-db.sh
+dc build --pull mandemarket-backend mandemarket-frontend
+# Migration is executed by the backend entrypoint, strictly with migrate deploy.
+dc run --rm --no-deps mandemarket-backend npm run production:preflight
 ```
 
-### Étape 3 : Déploiement des migrations de base de données
+The preflight command is read-only after entrypoint migration and must succeed.
+It checks inventory consistency, duplicate sales and unresolved refunds. Investigate
+rather than silently discarding errors. Validate previously NOT VALID constraints
+only after data reconciliation on a restored copy and an approved live plan.
+
 ```bash
-cd backend
-npx prisma migrate deploy
-cd ..
+dc up -d mandemarket-backend mandemarket-worker mandemarket-frontend
+dc ps
+dc logs --tail=100 mandemarket-backend mandemarket-worker
+curl --fail --silent --show-error https://apimandemarket.soubadigital.com/health/ready
 ```
 
-### Étape 4 : Construction et redémarrage des conteneurs
+Replace the example domain when routing changes. Confirm the worker heartbeat,
+not just HTTP liveness. Confirm payment callbacks are reachable with the correct
+raw payload/signature handling; public checkout rate limits must not consume them.
+
+## Acceptance before real customers
+
+Retain a dated record of actual outcomes for: verified signup and existing account
+recovery, guest order capability link, cross-account refusal, logout/revocation,
+cart/checkout retries, limited stock under concurrency, provider successful/failed/
+pending payments, duplicate callbacks, cancellation and a late payment after
+cancellation, two sellers shipping independently, offline payment attestation,
+refund confirmation and seller withdrawal reconciliation.
+
+Stripe/Paystack online refunds are confirmed from provider responses, not from a
+button click. CinetPay and offline refunds require a real external refund and an
+administrator attestation with an amount, currency and reference. A timeout remains
+UNKNOWN and requires reconciliation; never blindly issue the payment/refund again.
+The worker reconciles pending transactions/refunds and expires uninitiated or
+failed card orders. Configure alerts for its errors and unresolved records.
+
+Carrier labels are **not simulated**: automatic Boxtal booking is unavailable until
+an actual integration is implemented and accepted. Use seller-scoped manual
+tracking. The old unsafe direct admin order creation route is closed; use the
+server-priced checkout workflow. Returns currently refund a complete order, not
+individual lines. These are deliberate scope restrictions, not features claimed
+as completed. Confirm these limitations suit the launch scope.
+
+Important administrative endpoints (authenticated admin only):
+- `GET /api/admin/refunds`: outstanding and recent refunds.
+- `POST /api/admin/refunds/:id/reconcile`: recheck the provider without a blind replay.
+- `POST /api/admin/refunds/:id/confirm-manual`: externally executed manual refund
+  attestation; supply `confirmed:true`, exact internal `amount`, `currency:"XOF"`
+  and the real `reference` (never for Stripe/Paystack).
+- `POST /api/admin/orders/:id/confirm-payment`: attest money actually received for
+  cash-on-delivery/bank transfer, with exact internal `amount`, `currency:"XOF"`
+  and a unique real `reference`. This action does not transfer money.
+
+Internal amounts are hundredths of XOF even for European orders; Stripe conversion
+is explicit at its adapter. Never feed an EUR display amount into a ledger endpoint.
+
+## Backup, restore and rollback
+
+The backup script executes pg_dump inside the PostgreSQL container, writes a
+custom-format dump with private permissions, validates its table of contents and
+writes a SHA-256 checksum. Schedule it with your host scheduler. Implement encrypted
+OFF-HOST replication, retention and failure alerts separately; they are not provided
+by storing a script in Git. Measure recovery objectives from actual restore drills.
+
+Create an isolated target database first, then explicitly confirm restoration:
+
 ```bash
-docker compose -f docker-compose.prod.yml build --no-cache
-docker compose -f docker-compose.prod.yml up -d --remove-orphans
+RESTORE_DATABASE=tondjassa_restore_test \
+RESTORE_CONFIRM=I_UNDERSTAND_DATA_LOSS \
+./backend/scripts/restore-db.sh /secure/backups/tondjassa/mandemarket_TIMESTAMP.dump
 ```
 
-### Étape 5 : Validation immédiate des sondes de santé
-```bash
-# Vérifier la disponibilité de l'API
-curl -fsSL https://apimandemarket.soubadigital.com/health/ready
+The script fails on a checksum or SQL error and restores in one transaction.
+Never restore over a live database while customers or the worker are writing.
+A rollback of application images does not justify discarding payments/orders
+received after a backup. Reconcile provider transactions and use a forward repair
+where needed. Do not run down -v, db push, seed or demo reset against production.
+Pin the old reviewed image explicitly for an application rollback; merely checking
+out an old commit and running `up` does not change an already built image.
 
-# Vérifier la liveness
-curl -fsSL https://apimandemarket.soubadigital.com/health/live
-
-# Vérifier le frontend
-curl -fsSL https://mandemarket.soubadigital.com/
-```
-
-### Étape 6 : Contrôle de réconciliation post-déploiement
-```bash
-docker compose -f docker-compose.prod.yml exec backend npm run reconciliation:check
-```
-
----
-
-## 3. Plan de Rollback Rapide
-
-En cas d'anomalie critique lors des smoke tests post-déploiement :
-1. **Restaurer la base de données** à son état pré-déploiement :
-   ```bash
-   ./backend/scripts/restore-db.sh /backups/mandemarket/mandemarket_backup_PRE_DEPLOY.sql.gz
-   ```
-2. **Rebasculer sur l'image ou le commit précédent** :
-   ```bash
-   git checkout <PREVIOUS_RELEASE_TAG_OR_COMMIT>
-   docker compose -f docker-compose.prod.yml up -d
-   ```
-3. **Vérifier l'état opérationnel** :
-   ```bash
-   curl -fsSL https://apimandemarket.soubadigital.com/health/ready
-   ```
-
----
-
-## 4. Protocole de Suivi Post-Release (MM-MGR-102)
-
-1. **Surveillance des logs temps réel (RequestId)** :
-   ```bash
-   docker compose -f docker-compose.prod.yml logs -f --tail=100 backend
-   ```
-2. **Vérification quotidienne des webhooks** :
-   - Analyser les logs `/api/payment/webhook/*` pour détecter d'éventuels rejets de signature.
-3. **Rapprochement comptable bi-hebdomadaire** :
-   - Exécuter `npm run reconciliation:check` pour garantir l'égalité stricte entre le ledger en partie double et les soldes vendeur affichés.
+After restore/rollback: migrate as appropriate, run preflight, compare provider and
+ledger records, verify accounts and health, and only then reopen traffic.

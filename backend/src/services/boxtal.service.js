@@ -40,6 +40,7 @@ async function boxtalRequest(path, params = {}) {
         catch { resolve({ raw: data }); }
       });
     });
+    req.setTimeout(15000, () => req.destroy(new Error('Delai Boxtal depasse')));
     req.on('error', reject);
     req.end();
   });
@@ -83,15 +84,8 @@ function getDemoRates() {
 }
 
 // Créer un envoi (après confirmation commande)
-async function createShipment({ orderId, sender, recipient, parcel }) {
-  if (!isConfigured()) {
-    console.log(`[Boxtal] Non configuré - Envoi simulé pour commande ${orderId}`);
-    return { trackingNumber: `DEMO-${orderId.substring(0, 8).toUpperCase()}`, demo: true };
-  }
-  // En production, cette fonction appelle Boxtal pour créer l'étiquette
-  // et retourner le numéro de suivi
-  console.log(`[Boxtal] Création envoi pour commande ${orderId}`);
-  return { trackingNumber: null, message: 'Créer l\'envoi via le dashboard Boxtal' };
+async function createShipment() {
+  throw Object.assign(new Error('Creation automatique d etiquette non activee. Utilisez un bordereau reel et saisissez le suivi dans les commandes vendeur.'), { statusCode: 503 });
 }
 
 module.exports = { isConfigured, getShippingRates, createShipment, getDemoRates };

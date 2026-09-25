@@ -1,57 +1,20 @@
-# 🔧 Dockerfile Backend Node.js - Version Corrigée Optimisée
-FROM node:18-alpine AS base
-
-# 📦 Installation des dépendances système nécessaires
-RUN apk add --no-cache \
-    openssl \
-    wget \
-    curl \
-    netcat-openbsd \
-    postgresql-client \
-    dos2unix \
-    && rm -rf /var/cache/apk/*
-
+FROM node:24-alpine AS base
+RUN apk add --no-cache openssl wget netcat-openbsd postgresql16-client bash
 WORKDIR /app
-
-# 📋 Étape 1: Installation des dépendances
-FROM base AS deps
-COPY package*.json ./
-RUN npm ci --include=dev && npm cache clean --force
-
-# 🏗️ Étape 2: Build et préparation
 FROM base AS builder
-WORKDIR /app
-COPY --from=deps /app/node_modules ./node_modules
+COPY package*.json ./
 COPY prisma ./prisma
-RUN npx prisma generate
-COPY . .
-RUN npm ci --only=production && npm cache clean --force
-
-# 🚀 Étape 3: Production - Image finale
+RUN npm ci && npx --no-install prisma generate
+COPY src ./src
+COPY scripts ./scripts
+RUN npm run build && npm prune --omit=dev
 FROM base AS runner
-WORKDIR /app
-ENV NODE_ENV=production
-ENV PORT=4002
-
-RUN addgroup --system --gid 1001 nodejs && \
-    adduser --system --uid 1001 nodejs nodejs
-
-COPY --from=builder /app/node_modules ./node_modules
-COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
-COPY --chown=nodejs:nodejs . .
-
-# 🔧 Normalisation des fins de ligne Windows
-RUN dos2unix /app/scripts/*.sh && chmod +x /app/scripts/*.sh
-
-RUN mkdir -p /app/uploads /app/logs /app/tmp && \
-    chown -R nodejs:nodejs /app/uploads /app/logs /app/tmp
-
+ENV NODE_ENV=production PORT=4002
+RUN addgroup -S -g 1001 nodejs && adduser -S -u 1001 -G nodejs nodejs
+COPY --from=builder --chown=nodejs:nodejs /app /app
+RUN chmod +x /app/scripts/*.sh && mkdir -p /app/uploads /app/logs /app/tmp && chown -R nodejs:nodejs /app
 USER nodejs
-
-HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
-  CMD wget --no-verbose --tries=1 --spider http://localhost:4002/health || exit 1
-
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 CMD wget -q --spider http://localhost:4002/health/ready || exit 1
 EXPOSE 4002
-
 ENTRYPOINT ["/app/scripts/docker-entrypoint.sh"]
-CMD ["npm", "start"]
+CMD ["node", "src/app.js"]

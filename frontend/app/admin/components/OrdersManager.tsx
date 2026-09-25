@@ -1,5 +1,6 @@
 'use client';
 
+import { apiFetch as fetch } from '../../lib/api-fetch';
 import { useState, useEffect } from 'react';
 import { 
   ShoppingBagIcon, 

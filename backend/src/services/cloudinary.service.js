@@ -1,5 +1,6 @@
 const cloudinary = require('cloudinary').v2;
-const { CloudinaryStorage } = require('multer-storage-cloudinary');
+const crypto = require('node:crypto');
+const { pipeline } = require('node:stream');
 const multer = require('multer');
 
 // Configuration Cloudinary
@@ -10,44 +11,46 @@ cloudinary.config({
 });
 
 // Configuration du stockage Cloudinary
-const storage = new CloudinaryStorage({
-  cloudinary: cloudinary,
-  params: {
-    folder: (req, file) => {
-      if (req.seller && req.seller.id) {
-        return `mandemarket/sellers/${req.seller.id}`;
-      }
-      return 'mandemarket/platform';
-    },
-    allowed_formats: ['jpg', 'jpeg', 'png', 'webp'],
-    transformation: [
-      { width: 800, height: 800, crop: 'limit' }, // Limite la taille
-      { quality: 'auto' }, // Optimisation automatique
-      { fetch_format: 'auto' } // Format optimal selon le navigateur
-    ],
-    public_id: (req, file) => {
-      // Génère un nom unique pour le fichier
-      const timestamp = Date.now();
-      const randomString = Math.random().toString(36).substring(2, 15);
-      const filename = file.originalname.replace(/\s+/g, '_').replace(/\.[^/.]+$/, '');
-      return `product_${timestamp}_${randomString}_${filename}`;
-    }
+const storage = {
+  _handleFile(req, file, callback) {
+    const folder = req.seller ? `mandemarket/sellers/${req.seller.id}` : 'mandemarket/platform';
+    let done = false;
+    const finish = (error, result) => {
+      if (done) return;
+      done = true;
+      callback(error, result);
+    };
+    const stream = cloudinary.uploader.upload_stream({
+      folder, public_id: crypto.randomUUID(), resource_type: 'image',
+      allowed_formats: ['jpg', 'jpeg', 'png', 'webp'],
+      transformation: [{ width: 1600, height: 1600, crop: 'limit' }],
+    }, (error, result) => {
+      if (error) return finish(error);
+      if (!result) return finish(new Error('Upload Cloudinary incomplet'));
+      finish(null, { path: result.secure_url, filename: result.public_id, size: result.bytes });
+    });
+    pipeline(file.stream, stream, (error) => { if (error) finish(error); });
   },
-});
+  _removeFile(_req, file, callback) {
+    if (!file.filename) return callback(null);
+    cloudinary.uploader.destroy(file.filename).then(() => callback(null), callback);
+  },
+};
 
 // Middleware Multer avec Cloudinary
 const uploadToCloudinary = multer({
   storage: storage,
   limits: {
+    files: 10, fields: 20, parts: 30,
     fileSize: 5 * 1024 * 1024, // 5 MB max
   },
   fileFilter: (req, file, cb) => {
     // Vérifier le type MIME
-    const allowedMimes = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp', 'image/svg+xml'];
+    const allowedMimes = ['image/jpeg', 'image/png', 'image/webp'];
     if (allowedMimes.includes(file.mimetype)) {
       cb(null, true);
     } else {
-      cb(new Error('Format de fichier non supporté. Utilisez JPG, PNG, GIF, WEBP ou SVG.'), false);
+      cb(new Error('Format de fichier non supporté. Utilisez JPG, PNG ou WEBP.'), false);
     }
   }
 });

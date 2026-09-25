@@ -1,5 +1,6 @@
 'use client';
 
+import { apiFetch as fetch } from '../lib/api-fetch';
 import { useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
@@ -44,7 +45,7 @@ export default function DevenirVendeurPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (form.password.length < 8) { setError('Le mot de passe doit faire au moins 8 caractères.'); return; }
+    if (form.password.length < 12) { setError('Le mot de passe doit faire au moins 12 caractères.'); return; }
     if (form.storeName.trim().length < 2) { setError('Le nom de boutique doit faire au moins 2 caractères.'); return; }
 
     setLoading(true);
@@ -65,6 +66,7 @@ export default function DevenirVendeurPage() {
       if (!res.ok) { setError(data.error || 'Une erreur est survenue.'); return; }
 
       // Store token so seller can access dashboard directly
+      if (data.verificationRequired) { window.location.href = '/compte/verifier-email'; return; }
       if (data.token) {
         localStorage.setItem('admin_token', data.token);
         if (data.user) localStorage.setItem('admin_user', JSON.stringify(data.user));
@@ -222,7 +224,7 @@ export default function DevenirVendeurPage() {
               <div>
                 <label className="block text-sm font-semibold text-gray-700 mb-1.5">Mot de passe * <span className="font-normal text-gray-400">(8 caractères min.)</span></label>
                 <input
-                  type="password" name="password" value={form.password} onChange={handleChange} required minLength={8}
+                  type="password" name="password" value={form.password} onChange={handleChange} required minLength={12}
                   placeholder="••••••••"
                   className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-orange-500 focus:border-orange-500 outline-none"
                 />

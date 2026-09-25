@@ -60,6 +60,7 @@ export default function ReturnsModerationManager() {
 
   // Refund confirmation modal
   const [refundModal, setRefundModal] = useState<ReturnRequest | null>(null);
+  const [itemsReceived, setItemsReceived] = useState(false);
 
   const fetchReturns = useCallback(async () => {
     setLoading(true);
@@ -116,10 +117,10 @@ export default function ReturnsModerationManager() {
     if (!refundModal) return;
     setActionLoading(refundModal.id);
     try {
-      await AdminService.processRefund(refundModal.id);
+      const result = await AdminService.processRefund(refundModal.id, itemsReceived);
       setRefundModal(null);
       fetchReturns();
-      alert('Remboursement exécuté avec succès. Le stock a été rétabli et le ledger mis à jour.');
+      alert(result.refund?.status === 'COMPLETED' ? 'Remboursement confirme par le prestataire.' : `Demande enregistree (${result.refund?.status || 'en attente'}). Ne remboursez pas une seconde fois. Consultez le suivi des remboursements.`);
     } catch (err) {
       alert(err instanceof Error ? err.message : 'Erreur lors du remboursement');
     } finally {
@@ -266,7 +267,7 @@ export default function ReturnsModerationManager() {
 
                     {ret.status === 'approved' && (
                       <button
-                        onClick={() => setRefundModal(ret)}
+                        onClick={() => { setItemsReceived(false); setRefundModal(ret); }}
                         disabled={actionLoading === ret.id}
                         className="inline-flex items-center gap-1.5 px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-xl text-xs font-semibold transition-colors disabled:opacity-50 shadow-sm"
                       >
@@ -409,13 +410,13 @@ export default function ReturnsModerationManager() {
               pour la commande #{refundModal.orderId.substring(0, 8).toUpperCase()}.
             </p>
             <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-[11px] text-amber-800 mb-4">
-              <strong>Opérations exécutées automatiquement :</strong>
-              <ul className="list-disc ml-4 mt-1 space-y-0.5">
-                <li>Rétablissement des stocks en base de données</li>
-                <li>Inversion des lignes d'écritures du ledger vendeur</li>
-                <li>Passage du statut de commande à REFUNDED</li>
-                <li>Génération de la trace d'audit comptable</li>
-              </ul>
+              Le paiement ne sera marque rembourse qu'apres confirmation du prestataire.
+              Un delai ou une erreur reseau conserve la demande pour reconciliation.
+              Les remboursements CinetPay ou hors ligne demandent une attestation administrative.
+              <label className="flex items-start gap-2 mt-3">
+                <input type="checkbox" checked={itemsReceived} onChange={e => setItemsReceived(e.target.checked)} />
+                Tous les articles ont ete physiquement recus et peuvent etre remis en stock.
+              </label>
             </div>
 
             <div className="flex gap-3 pt-1">

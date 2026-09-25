@@ -9,7 +9,7 @@ function getStripe() {
 }
 
 // currency: 'xof' (Afrique) ou 'eur' (Europe)
-async function createCheckoutSession({ orderId, amount, customer, successUrl, cancelUrl, currency = 'xof' }) {
+async function createCheckoutSession({ orderId, amount, customer, successUrl, cancelUrl, currency = 'xof', idempotencyKey }) {
   const stripe = getStripe();
 
   let unitAmount;
@@ -47,7 +47,7 @@ async function createCheckoutSession({ orderId, amount, customer, successUrl, ca
     client_reference_id: orderId,
     customer_email: customer.email,
     metadata: { orderId, currency: displayCurrency },
-  });
+  }, { idempotencyKey: idempotencyKey || `checkout-${orderId}` });
 
   return { paymentUrl: session.url, sessionId: session.id };
 }
@@ -57,4 +57,4 @@ async function constructWebhookEvent(body, signature) {
   return stripe.webhooks.constructEvent(body, signature, process.env.STRIPE_WEBHOOK_SECRET || '');
 }
 
-module.exports = { createCheckoutSession, constructWebhookEvent };
+module.exports = { createCheckoutSession, constructWebhookEvent, getStripe };

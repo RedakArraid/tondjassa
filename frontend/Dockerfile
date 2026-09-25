@@ -1,5 +1,5 @@
 # 🌐 Dockerfile Frontend Next.js - Version Corrigée Optimisée
-FROM node:18-alpine AS base
+FROM node:24-alpine AS base
 
 # 📦 Installation des dépendances système
 RUN apk add --no-cache libc6-compat wget curl

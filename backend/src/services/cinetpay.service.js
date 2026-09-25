@@ -38,6 +38,7 @@ async function initiatePayment({ orderId, amount, customer, returnUrl, notifyUrl
 
   const response = await fetch(CINETPAY_API, {
     method: 'POST',
+    signal: AbortSignal.timeout(15000),
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   });
@@ -62,6 +63,7 @@ async function checkPaymentStatus(transactionId) {
 
   const response = await fetch(CINETPAY_CHECK_API, {
     method: 'POST',
+    signal: AbortSignal.timeout(15000),
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       apikey: process.env.CINETPAY_API_KEY,
@@ -82,7 +84,7 @@ async function checkPaymentStatus(transactionId) {
     status: data.data?.status || 'UNKNOWN',
     amount: amountCentimes,
     amountFCFA,
-    currency: data.data?.currency || 'XOF',
+    currency: data.data?.currency || null,
     operatorId: data.data?.operator_id,
     paymentMethod: data.data?.payment_method,
     paymentDate: data.data?.payment_date,

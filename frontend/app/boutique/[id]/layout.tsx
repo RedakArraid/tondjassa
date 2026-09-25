@@ -2,11 +2,11 @@ import { Metadata } from 'next';
 
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://mandemarket.soubadigital.com';
 
-type Props = { params: { id: string } };
+type Props = { params: Promise<{ id: string }> };
 
 // Génère des hreflang dynamiques par produit
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
-  const url = `${SITE_URL}/boutique/${params.id}`;
+  const url = `${SITE_URL}/boutique/${(await params).id}`;
 
   const languages: Record<string, string> = {
     'fr': url, 'en': url,

@@ -1,4 +1,5 @@
 'use client';
+import { logoutSession } from '../../../lib/api-fetch';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
@@ -113,7 +114,8 @@ export default function SellerShell({ children }: { children: React.ReactNode })
     return () => document.removeEventListener('mousedown', onDoc);
   }, []);
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    try { await logoutSession('staff'); } catch (error) { window.alert(error instanceof Error ? error.message : 'Deconnexion non confirmee'); return; }
     if (typeof window !== 'undefined') {
       localStorage.removeItem('admin_token');
       localStorage.removeItem('admin_user');

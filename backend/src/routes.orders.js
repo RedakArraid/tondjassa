@@ -4,6 +4,7 @@ const router = express.Router();
 const { requireAuth, requireRole, optionalAuth } = require('./middleware.auth');
 const db = require('./db');
 const { OrderService } = require('./services/order.service');
+const { assertOrderAccess, publicOrder } = require('./services/order-access.service');
 
 // Schémas de validation
 const orderSchema = z.object({
@@ -51,7 +52,8 @@ const checkoutSchema = z.object({
   paymentMethod: z.string().default('cash_on_delivery'),
   shippingMethod: z.string().optional(),
   promoCode: z.string().optional().nullable(),
-  idempotencyKey: z.string().optional().nullable(),
+  idempotencyKey: z.string().uuid(),
+  checkoutSecret: z.string().regex(/^[a-f0-9]{64}$/).optional(),
   notes: z.string().optional().nullable()
 });
 
@@ -59,6 +61,7 @@ const checkoutSchema = z.object({
 router.post('/checkout', optionalAuth, async (req, res) => {
   try {
     const data = checkoutSchema.parse(req.body);
+    if (!req.user && !data.checkoutSecret) return res.status(400).json({ error: 'Secret de commande invite requis' });
     const ipAddress = req.ip || req.headers['x-forwarded-for'] || req.socket.remoteAddress;
 
     const { order, isDuplicate } = await OrderService.checkoutOrder({
@@ -69,6 +72,7 @@ router.post('/checkout', optionalAuth, async (req, res) => {
       promoCode: data.promoCode,
       paymentMethod: data.paymentMethod,
       idempotencyKey: data.idempotencyKey,
+      checkoutSecret: data.checkoutSecret,
       notes: data.notes,
       reqUser: req.user,
       ipAddress,
@@ -84,7 +88,7 @@ router.post('/checkout', optionalAuth, async (req, res) => {
           include: { items: { include: { product: { select: { name: true } } } } }
         });
         if (fullCustomer && fullOrder) {
-          emailService.sendOrderConfirmation(fullCustomer, fullOrder).catch(console.error);
+          emailService.sendOrderConfirmation(fullOrder.customerSnapshot || fullCustomer, fullOrder).catch(console.error);
           emailService.sendNewOrderNotification(fullOrder, fullCustomer).catch(console.error);
         }
       } catch (emailErr) {
@@ -99,7 +103,7 @@ router.post('/checkout', optionalAuth, async (req, res) => {
       totalAmount: order.totalAmount,
       currency: order.currency,
       isDuplicate,
-      order,
+      order: publicOrder(order),
       message: isDuplicate ? 'Commande déjà enregistrée' : 'Commande créée avec succès'
     });
   } catch (error) {
@@ -115,7 +119,7 @@ router.post('/checkout', optionalAuth, async (req, res) => {
 });
 
 // GET consultation publique d'une commande par numéro de commande ou identifiant (MM-FE-031)
-router.get('/reference/:orderNumber', async (req, res) => {
+router.get('/reference/:orderNumber', optionalAuth, async (req, res) => {
   try {
     const { orderNumber } = req.params;
     const order = await db.order.findFirst({
@@ -143,7 +147,6 @@ router.get('/reference/:orderNumber', async (req, res) => {
                 name: true,
                 images: true,
                 price: true,
-                slug: true
               }
             }
           }
@@ -164,7 +167,7 @@ router.get('/reference/:orderNumber', async (req, res) => {
             method: true,
             carrier: true,
             status: true,
-            trackingNumber: true,
+            trackingCode: true,
             estimatedDelivery: true
           }
         }
@@ -175,10 +178,11 @@ router.get('/reference/:orderNumber', async (req, res) => {
       return res.status(404).json({ error: 'Commande introuvable' });
     }
 
-    res.json({ order });
+    assertOrderAccess(req, order);
+    res.setHeader('Cache-Control', 'no-store');
+    res.json({ order: publicOrder(order) });
   } catch (error) {
-    console.error('Erreur récupération commande par référence:', error);
-    res.status(500).json({ error: 'Erreur serveur' });
+    res.status(error.statusCode || 500).json({ error: error.statusCode ? error.message : 'Erreur serveur' });
   }
 });
 
@@ -217,7 +221,7 @@ router.get('/', requireAuth, requireRole(['admin', 'manager']), async (req, res)
         where,
         include: {
           customer: true,
-          user: true,
+          user: { select: { id: true, name: true, email: true } },
           items: {
             include: {
               product: true
@@ -259,7 +263,7 @@ router.get('/:id', requireAuth, requireRole(['admin', 'manager']), async (req, r
             address: true
           }
         },
-        user: true,
+        user: { select: { id: true, name: true, email: true } },
         items: {
           include: {
             product: true
@@ -281,115 +285,9 @@ router.get('/:id', requireAuth, requireRole(['admin', 'manager']), async (req, r
   }
 });
 
-// POST créer une nouvelle commande
+// Orders, including operator-assisted orders, must use the priced checkout path.
 router.post('/', requireAuth, requireRole(['admin', 'manager']), async (req, res) => {
-  try {
-    const data = orderSchema.parse(req.body);
-    
-    // Récupérer les produits et vendeurs pour calcul des commissions
-    const productIds = [...new Set(data.items.map(i => i.productId))];
-    const products = await db.product.findMany({
-      where: { id: { in: productIds } },
-      include: { seller: true }
-    });
-    const productMap = Object.fromEntries(products.map(p => [p.id, p]));
-
-    const itemsWithCommission = await Promise.all(data.items.map(async (item) => {
-      const totalPrice = item.unitPrice * item.quantity;
-      const product = productMap[item.productId];
-      let sellerId = null;
-      let commissionAmount = 0;
-      let sellerEarnings = totalPrice;
-
-      if (product?.seller) {
-        sellerId = product.seller.id;
-        const rate = product.seller.commissionRate || 10;
-        commissionAmount = Math.round(totalPrice * (rate / 100));
-        sellerEarnings = totalPrice - commissionAmount;
-      }
-
-      return {
-        productId: item.productId,
-        sellerId,
-        quantity: item.quantity,
-        unitPrice: item.unitPrice,
-        totalPrice,
-        commissionAmount,
-        sellerEarnings
-      };
-    }));
-    
-    // Créer la commande avec les items
-    const order = await db.order.create({
-      data: {
-        customerId: data.customerId,
-        userId: data.userId || req.user?.userId,
-        status: data.status || 'PENDING',
-        totalAmount: data.totalAmount,
-        taxAmount: data.taxAmount || 0,
-        shippingCost: data.shippingCost || 0,
-        discountAmount: data.discountAmount || 0,
-        promotionCode: data.promotionCode,
-        notes: data.notes,
-        items: {
-          create: itemsWithCommission
-        }
-      },
-      include: {
-        customer: true,
-        items: {
-          include: {
-            product: true,
-            seller: { select: { id: true, storeName: true, slug: true } }
-          }
-        }
-      }
-    });
-
-    // Mettre à jour l'inventaire
-    for (const item of data.items) {
-      try {
-        await db.inventory.update({
-          where: { productId: item.productId },
-          data: {
-            reserved: { increment: item.quantity },
-            available: { decrement: item.quantity }
-          }
-        });
-      } catch (e) {
-        // Inventaire peut ne pas exister pour tous les produits
-      }
-    }
-
-    // Mettre à jour les stats vendeurs (totalSales, totalEarnings)
-    const sellerUpdates = {};
-    for (const item of itemsWithCommission) {
-      if (item.sellerId) {
-        if (!sellerUpdates[item.sellerId]) {
-          sellerUpdates[item.sellerId] = { sales: 0, earnings: 0 };
-        }
-        sellerUpdates[item.sellerId].sales += item.totalPrice;
-        sellerUpdates[item.sellerId].earnings += item.sellerEarnings;
-      }
-    }
-    for (const [sid, totals] of Object.entries(sellerUpdates)) {
-      await db.seller.update({
-        where: { id: sid },
-        data: {
-          totalSales: { increment: totals.sales },
-          totalEarnings: { increment: totals.earnings }
-        }
-      });
-    }
-
-    res.status(201).json(order);
-  } catch (error) {
-    console.error('Erreur lors de la création de la commande:', error);
-    if (error.name === 'ZodError') {
-      return res.status(400).json({ error: 'Données invalides', details: error.errors });
-    }
-    res.status(500).json({ error: 'Erreur serveur' });
-  }
+  res.status(409).json({ error: 'Utilisez le parcours checkout avec prix serveur; la creation manuelle non tarifee est desactivee.' });
 });
 
 // PATCH /:id/status - Transition d'état sécurisée via machine d'état (MM-BE-033)

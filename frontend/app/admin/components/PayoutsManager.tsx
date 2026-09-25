@@ -17,7 +17,7 @@ interface Payout {
 export default function PayoutsManager() {
   const [payouts, setPayouts] = useState<Payout[]>([]);
   const [loading, setLoading] = useState(true);
-  const [filter, setFilter] = useState<'all' | 'pending' | 'completed' | 'rejected'>('all');
+  const [filter, setFilter] = useState<'all' | 'pending' | 'processing' | 'completed' | 'failed'>('all');
   const [updating, setUpdating] = useState<string | null>(null);
 
   const load = async () => {
@@ -37,6 +37,15 @@ export default function PayoutsManager() {
     load();
   }, [filter]);
 
+  const handleProcessing = async (id: string) => {
+    setUpdating(id);
+    try {
+      await SellerService.adminUpdatePayout(id, { status: 'processing' });
+      await load();
+    } catch (error) { window.alert(error instanceof Error ? error.message : 'Erreur'); }
+    finally { setUpdating(null); }
+  };
+
   const handleComplete = async (id: string, reference?: string) => {
     setUpdating(id);
     try {
@@ -52,7 +61,7 @@ export default function PayoutsManager() {
   const handleReject = async (id: string) => {
     setUpdating(id);
     try {
-      await SellerService.adminUpdatePayout(id, { status: 'rejected' });
+      await SellerService.adminUpdatePayout(id, { status: 'failed' });
       load();
     } catch (err: any) {
       alert(err.message || 'Erreur');
@@ -74,9 +83,9 @@ export default function PayoutsManager() {
           className="px-3 py-2 border border-gray-300 rounded-lg text-sm"
         >
           <option value="all">Tous</option>
-          <option value="pending">En attente</option>
+          <option value="pending">En attente</option><option value="processing">En traitement</option>
           <option value="completed">Effectués</option>
-          <option value="rejected">Refusés</option>
+          <option value="failed">Refusés</option>
         </select>
       </div>
 
@@ -128,18 +137,19 @@ export default function PayoutsManager() {
                     {new Date(p.createdAt).toLocaleDateString('fr-FR')}
                   </td>
                   <td className="px-4 py-3 text-right">
-                    {p.status === 'pending' && (
+                    {['pending', 'processing'].includes(p.status) && (
                       <div className="flex gap-2 justify-end">
                         <button
                           onClick={() => {
-                            const ref = window.prompt('Référence du virement (optionnel)');
-                            handleComplete(p.id, ref || undefined);
+                            if (p.status === 'pending') { handleProcessing(p.id); return; }
+                            const ref = window.prompt('Reference obligatoire du virement effectivement realise');
+                            if (ref && ref.trim().length >= 6) handleComplete(p.id, ref.trim());
                           }}
                           disabled={!!updating}
                           className="inline-flex items-center gap-1 px-3 py-1.5 bg-green-100 text-green-700 rounded-lg text-sm hover:bg-green-200"
                         >
                           <CheckCircleIcon className="w-4 h-4" />
-                          {updating === p.id ? '...' : 'Marquer effectué'}
+                          {updating === p.id ? '...' : p.status === 'pending' ? 'Prendre en charge' : 'Confirmer le versement'}
                         </button>
                         <button
                           onClick={() => handleReject(p.id)}

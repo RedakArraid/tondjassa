@@ -4,10 +4,10 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
+    "build": "next build --webpack",
     "start": "next start",
-    "lint": "next lint",
-    "type-check": "tsc --noEmit",
+    "lint": "eslint app tests",
+    "type-check": "next typegen && tsc --noEmit",
     "test": "node --test tests/*.test.js"
   },
   "dependencies": {

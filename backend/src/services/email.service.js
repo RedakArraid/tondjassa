@@ -8,6 +8,8 @@ const createTransporter = () => {
     host: process.env.SMTP_HOST,
     port: parseInt(process.env.SMTP_PORT || '587', 10),
     secure: process.env.SMTP_PORT === '465',
+    requireTLS: process.env.NODE_ENV === 'production',
+    connectionTimeout: 10000, socketTimeout: 15000,
     auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
     // Strict TLS (rejectUnauthorized: false supprimé selon MM-BE-080)
   });
@@ -33,6 +35,7 @@ async function sendEmail({ to, subject, html }, maxRetries = 3) {
     attempt++;
     try {
       if (!isConfigured()) {
+        if (process.env.NODE_ENV === 'production') return { success: false, error: 'SMTP non configure' };
         console.log(`[Email] SMTP non configuré - Notification enregistrée: "${subject}" pour ${to}`);
         return { success: true, simulated: true };
       }
@@ -112,12 +115,12 @@ async function sendOrderConfirmation(customer, order) {
     <h3 style="color: #374151; margin-top: 24px; font-size: 15px;">Récapitulatif de votre panier</h3>
     ${itemsHtml}
     <div class="total-row">
-      <span>Total réglé</span>
+      <span>Total de la commande</span>
       <span>${Math.round(order.totalAmount / 100).toLocaleString('fr-FR')} FCFA</span>
     </div>
 
     <div style="margin-top: 30px; text-align: center;">
-      <a href="${process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3000'}/compte/commandes/${order.id}" class="btn">
+      <a href="${process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3000'}/commande/${order.id}#token=${require('./order-access.service').createOrderToken(order.id)}" class="btn">
         Suivre ma commande
       </a>
     </div>
@@ -159,7 +162,7 @@ async function sendOrderStatusUpdate(customer, order, newStatus) {
     ` : ''}
 
     <div style="margin-top: 28px; text-align: center;">
-      <a href="${process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3000'}/compte/commandes/${order.id}" class="btn">
+      <a href="${process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3000'}/commande/${order.id}#token=${require('./order-access.service').createOrderToken(order.id)}" class="btn">
         Consulter ma commande
       </a>
     </div>

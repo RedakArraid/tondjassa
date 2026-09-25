@@ -1,5 +1,6 @@
 "use client";
 
+import { apiFetch as fetch } from '../../lib/api-fetch';
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { EyeIcon, EyeSlashIcon, LockClosedIcon } from "@heroicons/react/24/outline";
@@ -151,7 +152,7 @@ export default function AdminLogin() {
                 "Se connecter"
               )}
             </button>
-          </form>
+          </form><div className="mt-4 text-sm flex gap-4"><a href="/compte/mot-de-passe-oublie">Mot de passe oublie</a><a href="/compte/verifier-email">Verifier mon email</a></div>
         </div>
 
         {/* Footer */}

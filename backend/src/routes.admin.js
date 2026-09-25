@@ -103,6 +103,8 @@ router.post('/users', async (req, res) => {
       return res.status(409).json({ error: 'Un utilisateur avec cet email existe déjà' });
     }
 
+    require('./services/verification.service').passwordRule.parse(password);
+    require('./services/verification.service').emailRule.parse(cleanEmail);
     const hashedPassword = await bcrypt.hash(password, 12);
     const user = await db.user.create({
       data: {
@@ -130,7 +132,8 @@ router.post('/users', async (req, res) => {
       },
     });
 
-    res.status(201).json(user);
+    await require('./services/verification.service').sendVerification(user);
+    res.status(201).json({ ...user, verificationRequired: true });
   } catch (error) {
     console.error('Erreur POST /api/admin/users:', error);
     res.status(500).json({ error: 'Erreur lors de la création de l’utilisateur' });
@@ -492,74 +495,45 @@ router.post('/returns/:id/reject', async (req, res) => {
   }
 });
 
-// POST /api/admin/returns/:id/process-refund - Exécuter le remboursement et rétablir le stock
-router.post('/returns/:id/process-refund', async (req, res) => {
+// A returned item is not considered reimbursed until a provider confirms the refund.
+const RefundService = require('./services/refund.service');
+router.post('/returns/:id/process-refund', requireRole('admin'), async (req, res) => {
   try {
-    const ret = await db.returnRequest.findUnique({
-      where: { id: req.params.id },
-      include: {
-        order: {
-          include: {
-            items: { include: { product: true } },
-          },
-        },
-      },
-    });
-
-    if (!ret) return res.status(404).json({ error: 'Demande introuvable' });
-    if (ret.status === 'completed') {
-      return res.status(400).json({ error: 'Ce retour a déjà été remboursé' });
-    }
-
-    await db.$transaction(async (tx) => {
-      // 1. Mettre à jour le statut du retour
-      await tx.returnRequest.update({
-        where: { id: ret.id },
-        data: { status: 'completed' },
-      });
-
-      // 2. Mettre à jour la commande
-      await tx.order.update({
-        where: { id: ret.orderId },
-        data: { status: 'REFUNDED' },
-      });
-
-      // 3. Rétablir le stock des articles retournés
-      for (const item of ret.order.items) {
-        await tx.product.update({
-          where: { id: item.productId },
-          data: { stock: { increment: item.quantity } },
-        });
-
-        await tx.inventory.updateMany({
-          where: { productId: item.productId },
-          data: {
-            quantity: { increment: item.quantity },
-            available: { increment: item.quantity },
-          },
-        });
-      }
-
-      // 4. Inverser les écritures de gains dans le ledger vendeur
-      await ledgerService.recordRefund(ret.orderId, ret.order.totalAmount, `Retour accepté #${ret.id}`);
-
-      // 5. Journal d'audit
-      await tx.auditLog.create({
-        data: {
-          userId: req.user.userId,
-          action: 'ADMIN_RETURN_REFUNDED',
-          entity: 'ReturnRequest',
-          entityId: ret.id,
-          details: { orderId: ret.orderId, amount: ret.order.totalAmount },
-        },
-      });
-    });
-
-    res.json({ success: true, message: 'Retour remboursé et stock rétabli avec succès' });
-  } catch (error) {
-    console.error('Erreur remboursement retour:', error);
-    res.status(500).json({ error: 'Erreur lors du remboursement' });
-  }
+    const ret = await db.returnRequest.findUnique({ where: { id: req.params.id } });
+    if (!ret) return res.status(404).json({ error: 'Retour introuvable' });
+    if (!['approved', 'completed'].includes(ret.status)) return res.status(409).json({ error: 'Approuvez le retour avant remboursement' });
+    const refund = await RefundService.request(ret.orderId, { reason: `Retour ${ret.id}`, userId: req.user.userId,
+      restock: req.body?.itemsReceived === true });
+    const result = await RefundService.process(refund.id);
+    res.status(result.status === 'COMPLETED' ? 200 : 202).json({ success: true, refund: result,
+      message: result.status === 'COMPLETED' ? 'Remboursement confirme' : 'Remboursement non encore confirme: suivi requis' });
+  } catch (error) { res.status(error.statusCode || 500).json({ error: error.message }); }
 });
-
+router.get('/refunds', requireRole('admin'), async (_req, res) => {
+  try { res.json({ refunds: await db.refund.findMany({ orderBy: { createdAt: 'desc' }, take: 100 }) }); }
+  catch { res.status(503).json({ error: 'Service indisponible' }); }
+});
+router.post('/refunds/:id/reconcile', requireRole('admin'), async (req, res) => {
+  try { res.json({ refund: await RefundService.process(req.params.id) }); }
+  catch (error) { res.status(error.statusCode || 500).json({ error: error.message }); }
+});
+router.post('/refunds/:id/confirm-manual', requireRole('admin'), async (req, res) => {
+  try {
+    const refund = await db.refund.findUnique({ where: { id: req.params.id } });
+    if (!refund || ['stripe', 'paystack'].includes(refund.gateway)) return res.status(409).json({ error: 'Ce remboursement necessite une verification par API' });
+    if (req.body?.confirmed !== true || typeof req.body.reference !== 'string' || req.body.reference.trim().length < 6 ||
+      req.body.reference.length > 200 || req.body.amount !== refund.amount || req.body.currency !== refund.currency) {
+      return res.status(400).json({ error: 'Confirmez le transfert effectue avec sa reference, son montant exact et sa devise' });
+    }
+    res.json({ refund: await RefundService.finalize(refund.id, req.body.reference.trim(), req.user.userId) });
+  } catch (error) { res.status(error.statusCode || 500).json({ error: error.message }); }
+});
+router.post('/orders/:id/confirm-payment', requireRole('admin'), async (req, res) => {
+  try {
+    if (req.body?.confirmed !== true) return res.status(400).json({ error: 'Confirmez la reception effective des fonds' });
+    const result = await require('./services/payment.service').recordManualPayment(req.params.id, {
+      amount: req.body.amount, currency: req.body.currency, reference: req.body.reference, userId: req.user.userId });
+    res.json(result);
+  } catch (error) { res.status(error.statusCode || 500).json({ error: error.message }); }
+});
 module.exports = router;

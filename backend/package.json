@@ -6,8 +6,8 @@
   "scripts": {
     "start": "node src/app.js",
     "dev": "nodemon src/app.js",
-    "build": "node -e 'console.log(\"Backend build valid\")'",
-    "type-check": "node -e 'console.log(\"Backend syntax valid\")'",
+    "build": "node scripts/check-syntax.js",
+    "type-check": "node scripts/check-syntax.js",
     "migrate:deploy": "prisma migrate deploy",
     "migrate:status": "prisma migrate status",
     "reconciliation:check": "node scripts/verify-reconciliation.js",
@@ -16,9 +16,12 @@
     "db:generate": "prisma generate",
     "db:push": "prisma db push",
     "db:studio": "prisma studio",
-    "test": "jest",
+    "test": "jest --runInBand",
     "lint": "eslint src/",
-    "format": "prettier --write src/"
+    "format": "prettier --write src/",
+    "test:integration": "jest --config jest.integration.config.js --runInBand",
+    "production:preflight": "node scripts/production-preflight.js",
+    "worker": "node scripts/worker.js"
   },
   "dependencies": {
     "@prisma/client": "^6.19.0",

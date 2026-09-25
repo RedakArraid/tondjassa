@@ -79,7 +79,7 @@ mkdir -p /app/uploads /app/logs /app/tmp
 
 # Appliquer les migrations Prisma de façon stricte et non-destructive
 echo "Application des migrations Prisma (migrate deploy)..."
-if npx prisma migrate deploy; then
+if [ "${RUN_MIGRATIONS:-true}" = "false" ] || npx --no-install prisma migrate deploy; then
     echo "OK: Migrations Prisma appliquées avec succès"
 else
     echo "ERREUR CRITIQUE: Échec de 'prisma migrate deploy'. Arrêt immédiat pour protéger les données."
@@ -87,6 +87,10 @@ else
 fi
 
 # Seed optionnel (seulement si SEED_DATA=true)
+if [ "$SEED_DATA" = "true" ] && [ "$NODE_ENV" = "production" ]; then
+    echo "ERROR: SEED_DATA is forbidden in production"
+    exit 1
+fi
 if [ "$SEED_DATA" = "true" ]; then
     echo "SEED_DATA=true - Exécution du seed..."
     node scripts/seed.js 2>/dev/null || echo "Seed optionnel ignoré"

@@ -138,75 +138,8 @@ router.get('/track/:trackingNumber', async (req, res) => {
   }
 });
 
-// POST /api/shipping/create/:orderId (admin & seller) - Créer envoi / étiquette de transport
-router.post('/create/:orderId', requireAuth, requireRole(['admin', 'seller']), async (req, res) => {
-  try {
-    const order = await db.order.findUnique({
-      where: { id: req.params.orderId },
-      include: { customer: { include: { address: true } }, shipping: true, items: { include: { product: true } } },
-    });
-    if (!order) return res.status(404).json({ error: 'Commande non trouvée' });
-
-    // Si vendeur, vérifier qu'il possède un article dans la commande
-    if (req.user.role === 'seller') {
-      const seller = await db.seller.findUnique({ where: { userId: req.user.userId } });
-      if (!seller) return res.status(403).json({ error: 'Profil vendeur introuvable' });
-      const hasItem = order.items.some(i => i.product?.sellerId === seller.id);
-      if (!hasItem) return res.status(403).json({ error: 'Accès non autorisé pour cette commande' });
-    }
-
-    const region = detectRegion(order.customer?.address?.country || 'CI');
-
-    if (region === 'africa') {
-      // Livraison locale — mise à jour manuelle du tracking
-      const trackingCode = `LD-AF-${order.id.substring(0, 8).toUpperCase()}`;
-      const carrier = req.body.carrier || 'LOCAL_ABIDJAN';
-      await db.shipping.update({
-        where: { orderId: order.id },
-        data: { trackingCode, status: 'SHIPPED', carrier },
-      });
-
-      if (order.customer?.email) {
-        const emailService = require('./services/email.service');
-        emailService.sendShippingNotification(order.customer.email, {
-          orderNumber: order.orderNumber || order.id,
-          trackingNumber: trackingCode,
-          carrier,
-          estimatedDelivery: '2-5 jours ouvrés',
-        }).catch(e => console.warn('[Email] Notification expédition échouée:', e.message));
-      }
-
-      return res.json({ trackingCode, message: 'Tracking local créé. Mettez à jour manuellement.' });
-    }
-
-    // Europe → Boxtal
-    const carrier = req.body.carrier || 'COLISSIMO';
-    const result = await boxtal.createShipment({
-      orderId: order.id,
-      recipient: { name: `${order.customer.firstName} ${order.customer.lastName}`, address: order.customer.address },
-      parcel: req.body.parcel || { weight: 0.5 },
-    });
-
-    if (result.trackingNumber) {
-      await db.shipping.update({
-        where: { orderId: order.id },
-        data: { trackingCode: result.trackingNumber, status: 'SHIPPED', carrier },
-      });
-
-      if (order.customer?.email) {
-        const emailService = require('./services/email.service');
-        emailService.sendShippingNotification(order.customer.email, {
-          orderNumber: order.orderNumber || order.id,
-          trackingNumber: result.trackingNumber,
-          carrier,
-          estimatedDelivery: '3-6 jours ouvrés',
-        }).catch(e => console.warn('[Email] Notification expédition échouée:', e.message));
-      }
-    }
-    res.json({ ...result, message: result.trackingNumber ? 'Envoi Boxtal créé' : 'Configurez Boxtal pour générer des étiquettes automatiques' });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
+// Legacy endpoint must not simulate a shipment or bypass the stock state machine.
+router.post('/create/:orderId', requireAuth, requireRole(['admin', 'seller']), (_req, res) => {
+  res.status(409).json({ error: 'Utilisez le parcours expedition de la commande et un numero de suivi reel. La creation automatique d etiquette est desactivee.' });
 });
-
 module.exports = router;

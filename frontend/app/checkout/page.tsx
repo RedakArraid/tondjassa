@@ -1,5 +1,6 @@
 'use client';
 
+import { apiFetch as fetch } from '../lib/api-fetch';
 import { useState, useEffect, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
@@ -367,11 +368,6 @@ export default function CheckoutPage() {
       ? form.paymentMethod  // e.g. 'mtn_momo'
       : form.paymentMethod; // 'paystack' | 'stripe' | 'cash_on_delivery'
 
-    // Clé d'idempotence unique pour éviter tout double débit (MM-BE-032)
-    const idempotencyKey = typeof crypto !== 'undefined' && crypto.randomUUID
-      ? crypto.randomUUID()
-      : `mm_idemp_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
-
     const payload = {
       customer: {
         firstName: form.firstName.trim(),
@@ -393,15 +389,22 @@ export default function CheckoutPage() {
       paymentMethod: gateway,
       shippingMethod: form.shippingOptionId?.toLowerCase().includes('express') ? 'EXPRESS' : 'STANDARD',
       promoCode: appliedPromo || undefined,
-      idempotencyKey,
       notes: form.notes.trim() || undefined,
     };
 
+    const fingerprint = JSON.stringify(payload);
+    let attempt: { fingerprint: string; key: string; secret: string } | null = null;
+    try { attempt = JSON.parse(sessionStorage.getItem('mm_checkout_attempt') || 'null'); } catch { /* fresh attempt */ }
+    if (!attempt || attempt.fingerprint !== fingerprint) {
+      attempt = { fingerprint, key: crypto.randomUUID(), secret: Array.from(crypto.getRandomValues(new Uint8Array(32)), (b) => b.toString(16).padStart(2, '0')).join('') };
+      sessionStorage.setItem('mm_checkout_attempt', JSON.stringify(attempt));
+    }
+    const securePayload = { ...payload, idempotencyKey: attempt.key, checkoutSecret: attempt.secret };
     try {
       const res = await fetch(`${API_URL}/api/orders/checkout`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
+        body: JSON.stringify(securePayload),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? data.message ?? 'Erreur lors de la commande.');
@@ -409,8 +412,11 @@ export default function CheckoutPage() {
       const orderId = data.orderId ?? data.id ?? data.order?.id;
       const orderRef = data.orderNumber || orderId;
       if (!orderId) throw new Error('Identifiant de commande non reçu.');
+      localStorage.setItem(`mm_order_access_${orderId}`, attempt.secret);
+      localStorage.setItem(`mm_order_access_${orderRef}`, attempt.secret);
 
       if (form.paymentMethod === 'cash_on_delivery') {
+        sessionStorage.removeItem('mm_checkout_attempt');
         clearCart();
         router.push(`/commande/${orderRef}`);
         return;
@@ -425,6 +431,8 @@ export default function CheckoutPage() {
       if (!payRes.ok) throw new Error(payData.error ?? "Erreur d'initiation du paiement.");
       if (!payData.paymentUrl) throw new Error('URL de paiement non reçue.');
 
+      if (payData.transactionId) localStorage.setItem(`mm_order_access_${payData.transactionId}`, attempt.secret);
+      sessionStorage.removeItem('mm_checkout_attempt');
       clearCart();
       window.location.href = payData.paymentUrl;
     } catch (err) {
