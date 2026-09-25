@@ -1,0 +1,75 @@
+# Ephemeral CI only. No production hostnames, credentials, volumes or providers.
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ci-only-password
+      POSTGRES_DB: tondjassa_smoke_test
+    healthcheck:
+      test: [CMD-SHELL, 'pg_isready -U postgres -d tondjassa_smoke_test']
+      interval: 3s
+      timeout: 3s
+      retries: 20
+  redis:
+    image: redis:7-alpine
+    command: [redis-server, --requirepass, ci-only-password]
+    healthcheck:
+      test: [CMD, redis-cli, -a, ci-only-password, ping]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+  backend:
+    image: tondjassa-backend:ci
+    environment: &app_env
+      NODE_ENV: production
+      DATABASE_URL: postgresql://postgres:ci-only-password@postgres:5432/tondjassa_smoke_test
+      REDIS_URL: redis://:ci-only-password@redis:6379
+      JWT_SECRET: ${CI_JWT_SECRET:?CI_JWT_SECRET required}
+      TRUST_PROXY: loopback
+      CHECKOUT_COUNTRIES: CI
+      CORS_ORIGIN: https://shop.test.invalid
+      NEXT_PUBLIC_SITE_URL: https://shop.test.invalid
+      BACKEND_URL: https://api.test.invalid
+      SMTP_HOST: smtp.test.invalid
+      SMTP_USER: ci
+      SMTP_PASS: ci-only-password
+      CLOUDINARY_CLOUD_NAME: ci-placeholder
+      CLOUDINARY_API_KEY: ci-placeholder
+      CLOUDINARY_API_SECRET: ci-placeholder
+    ports: ['127.0.0.1:4002:4002']
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    healthcheck:
+      test: [CMD, wget, -q, --spider, 'http://127.0.0.1:4002/health/ready']
+      interval: 3s
+      timeout: 3s
+      retries: 30
+  worker:
+    image: tondjassa-backend:ci
+    environment:
+      <<: *app_env
+      RUN_MIGRATIONS: 'false'
+    command: [node, scripts/worker.js]
+    depends_on:
+      backend: { condition: service_healthy }
+    healthcheck:
+      test: [CMD, node, -e, "process.exit(Date.now()-Number(require('fs').readFileSync('/app/tmp/worker-heartbeat','utf8')) < 120000 ? 0 : 1)"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+  frontend:
+    image: tondjassa-frontend:ci
+    environment:
+      PORT: 3000
+      HOSTNAME: 0.0.0.0
+      INTERNAL_API_URL: http://backend:4002
+    ports: ['127.0.0.1:3000:3000']
+    depends_on:
+      backend: { condition: service_healthy }
+    healthcheck:
+      test: [CMD, wget, -q, --spider, 'http://127.0.0.1:3000/']
+      interval: 3s
+      timeout: 5s
+      retries: 30

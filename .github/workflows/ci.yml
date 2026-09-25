@@ -75,3 +75,38 @@ jobs:
         with: { persist-credentials: false }
       - run: docker build --pull -t tondjassa-backend:ci backend
       - run: docker build --pull -t tondjassa-frontend:ci frontend
+      - name: Start production images with isolated services
+        run: |
+          printf 'CI_JWT_SECRET=%s\n' "$(openssl rand -hex 32)" > "$RUNNER_TEMP/smoke.env"
+          chmod 600 "$RUNNER_TEMP/smoke.env"
+          docker compose --env-file "$RUNNER_TEMP/smoke.env" -p tondjassa-ci -f .github/compose.smoke.yml up -d --wait --wait-timeout 150
+          curl --fail --silent http://127.0.0.1:4002/health/ready
+          curl --fail --silent http://127.0.0.1:3000/ > /dev/null
+      - name: Verify backup and restore on an isolated target
+        env:
+          ENV_FILE: ${{ runner.temp }}/smoke.env
+          COMPOSE_FILE: .github/compose.smoke.yml
+          PROJECT_NAME: tondjassa-ci
+          DB_SERVICE: postgres
+          BACKUP_DIR: ${{ runner.temp }}/backups
+          RESTORE_DATABASE: tondjassa_restore_test
+          RESTORE_CONFIRM: I_UNDERSTAND_DATA_LOSS
+        run: |
+          compose=(docker compose --env-file "$ENV_FILE" -p "$PROJECT_NAME" -f "$COMPOSE_FILE")
+          "${compose[@]}" exec -T postgres psql -U postgres -d tondjassa_smoke_test -v ON_ERROR_STOP=1 -c "CREATE TABLE smoke_backup(marker TEXT); INSERT INTO smoke_backup VALUES ('restore-proof');"
+          bash backend/scripts/backup-db.sh
+          "${compose[@]}" exec -T postgres createdb -U postgres "$RESTORE_DATABASE"
+          backup=$(find "$BACKUP_DIR" -name '*.dump' -type f -print -quit)
+          bash backend/scripts/restore-db.sh "$backup"
+          test "$("${compose[@]}" exec -T postgres psql -U postgres -d "$RESTORE_DATABASE" -Atc "SELECT count(*) FROM smoke_backup WHERE marker='restore-proof'")" = 1
+          "${compose[@]}" exec -T backend npm run production:preflight
+      - name: Container diagnostics
+        if: failure()
+        run: docker compose --env-file "$RUNNER_TEMP/smoke.env" -p tondjassa-ci -f .github/compose.smoke.yml logs --tail=100 || true
+      - name: Remove ephemeral services
+        if: always()
+        run: |
+          if [ -f "$RUNNER_TEMP/smoke.env" ]; then
+            docker compose --env-file "$RUNNER_TEMP/smoke.env" -p tondjassa-ci -f .github/compose.smoke.yml down -v --remove-orphans
+            rm -f "$RUNNER_TEMP/smoke.env"
+          fi
