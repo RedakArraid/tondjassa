@@ -189,7 +189,7 @@ export default function RegisterPage() {
                     name="password"
                     value={form.password}
                     onChange={handleChange}
-                    placeholder="Minimum 6 caractères"
+                    placeholder="Minimum 12 caractères"
                     required
                     className="w-full pl-10 pr-4 py-3 border-2 border-gray-200 rounded-xl text-gray-900 placeholder-gray-400 focus:outline-none focus:border-orange-400 transition-colors"
                   />

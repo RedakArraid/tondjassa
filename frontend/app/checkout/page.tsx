@@ -1,7 +1,7 @@
 'use client';
 
 import { apiFetch as fetch } from '../lib/api-fetch';
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { useCart } from '../contexts/CartContext';
@@ -77,64 +77,12 @@ const ABIDJAN_COMMUNES = [
   { name: 'Port-Bouët', zone: 2 },
   { name: 'Attécoubé',  zone: 2 },
 ];
-const Z1_COMMUNES = new Set(ABIDJAN_COMMUNES.filter(c => c.zone === 1).map(c => c.name));
-const Z2_COMMUNES = new Set(ABIDJAN_COMMUNES.filter(c => c.zone === 2).map(c => c.name));
-
-const CI_SHIPPING: ShippingOption[] = [
-  {
-    id: 'abidjan_z1',
-    label: 'Abidjan — Zone 1',
-    detail: 'Plateau, Cocody, Marcory, Bingerville, Riviera • Livraison J+1',
-    carrier: 'ABIDJAN_Z1',
-    costXof: 0,
-    costDisplay: 'Gratuit',
-  },
-  {
-    id: 'abidjan_z2',
-    label: 'Abidjan — Zone 2',
-    detail: 'Yopougon, Abobo, Adjamé, Treichville, Koumassi, Port-Bouët • Livraison J+2',
-    carrier: 'ABIDJAN_Z2',
-    costXof: 50000,
-    costDisplay: '500 FCFA',
-  },
-  {
-    id: 'ci_national',
-    label: "Autre ville de Côte d'Ivoire",
-    detail: 'Bouaké, Yamoussoukro, San-Pédro, Korhogo, Man… • 3 à 5 jours',
-    carrier: 'CI_NATIONAL',
-    costXof: 200000,
-    costDisplay: '2 000 FCFA',
-  },
-];
-
-// ─── Livraison Afrique (hors CI) ───────────────────────────────────────────────
-const AFRICA_SHIPPING_ALL: ShippingOption[] = [
-  { id: 'uemoa', label: 'Zone UEMOA (SN, ML, BF, TG, BJ, GN)', detail: '5-7 jours', carrier: 'UEMOA_REGIONAL', costXof: 500000, costDisplay: '5 000 FCFA' },
-  { id: 'africa_other', label: "Autres pays d'Afrique", detail: '7-14 jours', carrier: 'AFRICA_INTERNATIONAL', costXof: 800000, costDisplay: '8 000 FCFA' },
-];
-
-function getAfricaShipping(countryCode: string): ShippingOption[] {
-  if (UEMOA_CODES.has(countryCode)) return AFRICA_SHIPPING_ALL;
-  return AFRICA_SHIPPING_ALL.filter(o => o.id === 'africa_other');
-}
-
-// ─── Livraison Europe ─────────────────────────────────────────────────────────
+// Shipping names and prices come exclusively from the server quote API.
 const EUR_XOF = 655.957;
-function eurCentsToXofCentimes(eurCents: number) {
-  return Math.round((eurCents / 100) * EUR_XOF * 100);
-}
 function xofToEur(centimesXof: number) {
   return Math.round((centimesXof / 100 / EUR_XOF) * 100) / 100;
 }
 
-const EUROPE_SHIPPING: ShippingOption[] = [
-  { id: 'eu_relais',     label: 'Point Relais (Mondial Relay / Pickup)', detail: '4-6 jours ouvrés', carrier: 'POINT_RELAIS',     eurCents: 499,  costXof: eurCentsToXofCentimes(499),  costDisplay: '4,99 €' },
-  { id: 'eu_standard',   label: 'Colissimo Standard',                    detail: '3-5 jours ouvrés', carrier: 'COLISSIMO',         eurCents: 699,  costXof: eurCentsToXofCentimes(699),  costDisplay: '6,99 €' },
-  { id: 'eu_suivi',      label: 'Colissimo — Suivi à domicile',          detail: '2-4 jours ouvrés', carrier: 'COLISSIMO_SUIVI',   eurCents: 899,  costXof: eurCentsToXofCentimes(899),  costDisplay: '8,99 €' },
-  { id: 'eu_chronopost', label: 'Chronopost — Express',                  detail: '1-2 jours ouvrés', carrier: 'CHRONOPOST',        eurCents: 1499, costXof: eurCentsToXofCentimes(1499), costDisplay: '14,99 €' },
-];
-
-// ─── Méthodes de paiement ─────────────────────────────────────────────────────
 const CI_OPERATORS = [
   {
     value: 'mtn_momo',
@@ -216,7 +164,7 @@ interface CheckoutForm {
 const INITIAL: CheckoutForm = {
   firstName: '', lastName: '', email: '', phone: '',
   street: '', city: '', commune: '', postalCode: '',
-  countryCode: 'CI', paymentMethod: 'mtn_momo', shippingOptionId: 'abidjan_z1', notes: '',
+  countryCode: 'CI', paymentMethod: 'mtn_momo', shippingOptionId: 'STANDARD', notes: '',
 };
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
@@ -226,6 +174,10 @@ export default function CheckoutPage() {
   const { setCountry } = useRegion();
   const [form, setForm] = useState<CheckoutForm>(INITIAL);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const checkoutCompleted = useRef(false);
+  const [shippingOptions, setShippingOptions] = useState<ShippingOption[]>([]);
+  const [quoteError, setQuoteError] = useState<string | null>(null);
+  const [acceptedQuoteKey, setAcceptedQuoteKey] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [isHydrated, setIsHydrated] = useState(false);
 
@@ -244,7 +196,7 @@ export default function CheckoutPage() {
   const [isQuoteLoading, setIsQuoteLoading] = useState(false);
 
   useEffect(() => { setIsHydrated(true); }, []);
-  useEffect(() => { if (isHydrated && items.length === 0) router.push('/boutique'); }, [isHydrated, items.length, router]);
+  useEffect(() => { if (isHydrated && items.length === 0 && !checkoutCompleted.current) router.push('/boutique'); }, [isHydrated, items.length, router]);
   useEffect(() => { setCountry(form.countryCode); }, [form.countryCode, setCountry]);
 
   const isCI = form.countryCode === 'CI';
@@ -252,69 +204,51 @@ export default function CheckoutPage() {
     EUROPE_CODES.has(form.countryCode) ? 'europe' : 'africa',
   [form.countryCode]);
 
-  const shippingOptions: ShippingOption[] = useMemo(() => {
-    if (region === 'europe') return EUROPE_SHIPPING;
-    if (isCI) return CI_SHIPPING;
-    return getAfricaShipping(form.countryCode);
-  }, [region, isCI, form.countryCode]);
+  const quoteKey = JSON.stringify({
+    items: items.map(item => ({ productId: item.product.id, quantity: item.quantity })),
+    country: form.countryCode,
+    shippingMethod: form.shippingOptionId,
+    promoCode: appliedPromo || undefined,
+  });
+  useEffect(() => {
+    const controller = new AbortController();
+    setShippingOptions([]);
+    fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4002'}/api/checkout/shipping-options?country=${encodeURIComponent(form.countryCode)}&subtotal=${totalPrice}`, { signal: controller.signal })
+      .then(async response => { if (!response.ok) throw new Error('Livraison indisponible'); return response.json(); })
+      .then(data => {
+        if (controller.signal.aborted) return;
+        setShippingOptions(data.options.map((option: { code: string; name: string; cost: number }) => ({
+          id: option.code, label: option.name, detail: 'Tarif calcule par le serveur', carrier: '', costXof: option.cost, costDisplay: '',
+        })));
+      })
+      .catch(() => { if (!controller.signal.aborted) setShippingOptions([]); });
+    return () => controller.abort();
+  }, [form.countryCode, totalPrice]);
 
-  // Récupération dynamique du devis officiel auprès du PricingService
   useEffect(() => {
     if (items.length === 0) return;
-    const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4002';
-    setIsQuoteLoading(true);
-    fetch(`${API_URL}/api/checkout/quote`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        items: items.map(item => ({ productId: item.product.id, quantity: item.quantity })),
-        country: form.countryCode || 'CI',
-        shippingMethod: form.shippingOptionId?.toLowerCase().includes('express') ? 'EXPRESS' : 'STANDARD',
-        promoCode: appliedPromo || undefined,
-      }),
-    })
-      .then(res => (res.ok ? res.json() : null))
-      .then(data => {
-        if (data && typeof data.totalAmount === 'number') {
-          setServerQuote(data);
-          if (data.appliedPromotion) {
-            setPromoMessage({
-              type: 'success',
-              text: `Code promo ${data.appliedPromotion.code} appliqué (-${displayPrice(data.appliedPromotion.discountAmount)})`,
-            });
-          }
-        }
-      })
-      .catch(() => {})
-      .finally(() => setIsQuoteLoading(false));
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [items, form.countryCode, form.shippingOptionId, appliedPromo]);
+    const controller = new AbortController();
+    setIsQuoteLoading(true); setQuoteError(null); setServerQuote(null); setAcceptedQuoteKey('');
+    fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4002'}/api/checkout/quote`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: quoteKey, signal: controller.signal,
+    }).then(async response => {
+      const data = await response.json();
+      if (!response.ok || typeof data.totalAmount !== 'number') throw new Error(data.error || 'Devis indisponible');
+      return data;
+    }).then(data => {
+      if (controller.signal.aborted) return;
+      setServerQuote(data); setAcceptedQuoteKey(quoteKey);
+      if (data.appliedPromotion) setPromoMessage({ type: 'success', text: `Code promo ${data.appliedPromotion.code} applique` });
+    }).catch(error => { if (!controller.signal.aborted) setQuoteError(error.message || 'Devis indisponible'); })
+      .finally(() => { if (!controller.signal.aborted) setIsQuoteLoading(false); });
+    return () => controller.abort();
+  }, [quoteKey, items.length]);
 
-  // Réinitialiser shipping + payment quand la région ou le pays change
   useEffect(() => {
-    const defaultPayment = region === 'europe' ? 'stripe' : isCI ? 'mtn_momo' : 'paystack';
-    setForm(prev => ({
-      ...prev,
-      shippingOptionId: shippingOptions[0]?.id ?? '',
-      paymentMethod: defaultPayment,
-      commune: '',
+    setForm(prev => ({ ...prev, shippingOptionId: 'STANDARD',
+      paymentMethod: region === 'europe' ? 'stripe' : isCI ? 'mtn_momo' : 'paystack', commune: '',
     }));
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [region, isCI]);
-
-  // Auto-dériver la zone de livraison depuis la commune sélectionnée (CI)
-  useEffect(() => {
-    if (!isCI || !form.commune) return;
-    let zoneId = 'ci_national';
-    if (Z1_COMMUNES.has(form.commune)) zoneId = 'abidjan_z1';
-    else if (Z2_COMMUNES.has(form.commune)) zoneId = 'abidjan_z2';
-    setForm(prev => ({
-      ...prev,
-      shippingOptionId: zoneId,
-      city: zoneId !== 'ci_national' ? 'Abidjan' : prev.city,
-    }));
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [form.commune]);
 
   const selectedShipping = shippingOptions.find(o => o.id === form.shippingOptionId) ?? shippingOptions[0];
   const shippingCostXof = serverQuote ? serverQuote.shippingCost : (selectedShipping?.costXof ?? 0);
@@ -349,6 +283,9 @@ export default function CheckoutPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!serverQuote || acceptedQuoteKey !== quoteKey || isQuoteLoading || quoteError) {
+      setError('Un devis valide est necessaire avant de confirmer.'); return;
+    }
     const err = validate();
     if (err) { setError(err); return; }
 
@@ -387,7 +324,7 @@ export default function CheckoutPage() {
         unitPrice: item.product.price,
       })),
       paymentMethod: gateway,
-      shippingMethod: form.shippingOptionId?.toLowerCase().includes('express') ? 'EXPRESS' : 'STANDARD',
+      shippingMethod: form.shippingOptionId,
       promoCode: appliedPromo || undefined,
       notes: form.notes.trim() || undefined,
     };
@@ -417,6 +354,7 @@ export default function CheckoutPage() {
 
       if (form.paymentMethod === 'cash_on_delivery') {
         sessionStorage.removeItem('mm_checkout_attempt');
+        checkoutCompleted.current = true;
         clearCart();
         router.push(`/commande/${orderRef}`);
         return;
@@ -433,6 +371,7 @@ export default function CheckoutPage() {
 
       if (payData.transactionId) localStorage.setItem(`mm_order_access_${payData.transactionId}`, attempt.secret);
       sessionStorage.removeItem('mm_checkout_attempt');
+      checkoutCompleted.current = true;
       clearCart();
       window.location.href = payData.paymentUrl;
     } catch (err) {
@@ -711,58 +650,15 @@ export default function CheckoutPage() {
                   </div>
                 </div>
 
-                {/* CI : la zone est auto-dérivée depuis la commune — affichage informatif */}
-                {isCI && form.commune && form.commune !== 'autre_ci' ? (
-                  <div className={`p-4 rounded-xl border-2 ${
-                    selectedShipping?.id === 'abidjan_z1'
-                      ? 'border-green-400 bg-green-50'
-                      : 'border-yellow-400 bg-yellow-50'
-                  }`}>
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <p className="font-semibold text-gray-800">{selectedShipping?.label}</p>
-                        <p className="text-xs text-gray-500 mt-0.5">{selectedShipping?.detail}</p>
-                      </div>
-                      <div className="text-right">
-                        <span className={`font-bold text-sm ${selectedShipping?.costXof === 0 ? 'text-green-600' : 'text-orange-600'}`}>
-                          {selectedShipping?.costDisplay}
-                        </span>
-                        <CheckCircleIcon className="w-5 h-5 text-green-500 ml-auto mt-1" />
-                      </div>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="space-y-3">
-                    {shippingOptions.map(option => {
-                      const isSelected = form.shippingOptionId === option.id;
-                      return (
-                        <label
-                          key={option.id}
-                          className={`flex items-center gap-4 p-4 rounded-xl border-2 cursor-pointer transition-all ${
-                            isSelected ? 'border-orange-500 bg-orange-50' : 'border-gray-200 hover:border-orange-300'
-                          }`}
-                        >
-                          <input
-                            type="radio"
-                            name="shippingOptionId"
-                            value={option.id}
-                            checked={isSelected}
-                            onChange={handleChange}
-                            className="accent-orange-500"
-                          />
-                          <div className="flex-1">
-                            <p className={`font-semibold ${isSelected ? 'text-orange-700' : 'text-gray-800'}`}>{option.label}</p>
-                            <p className="text-xs text-gray-500 mt-0.5">{option.detail}</p>
-                          </div>
-                          <span className={`font-bold text-sm flex-shrink-0 ${option.costXof === 0 ? 'text-green-600' : isSelected ? 'text-orange-600' : 'text-gray-700'}`}>
-                            {option.costDisplay}
-                          </span>
-                          {isSelected && <CheckCircleIcon className="w-5 h-5 text-orange-500 flex-shrink-0" />}
-                        </label>
-                      );
-                    })}
-                  </div>
-                )}
+                <div className="space-y-3" data-testid="shipping-options">
+                  {shippingOptions.map(option => (
+                    <label key={option.id} className="flex items-center gap-4 p-4 rounded-xl border-2 cursor-pointer">
+                      <input type="radio" name="shippingOptionId" value={option.id} checked={form.shippingOptionId === option.id} onChange={handleChange} />
+                      <span className="flex-1 font-semibold">{option.label}</span>
+                      <span className="font-bold">{displayPrice(option.costXof)}</span>
+                    </label>
+                  ))}
+                </div>
               </div>
 
               {/* Méthode de paiement */}
@@ -1041,7 +937,7 @@ export default function CheckoutPage() {
                   </div>
                   {isCI && form.commune && form.commune !== 'autre_ci' && (
                     <p className="text-xs text-gray-400">
-                      {Z1_COMMUNES.has(form.commune) ? '📍 Zone 1 · Livraison J+1' : '📍 Zone 2 · Livraison J+2'}
+                      {selectedShipping?.label}
                     </p>
                   )}
                   {region === 'europe' && (
@@ -1059,10 +955,12 @@ export default function CheckoutPage() {
                   </div>
                 </div>
 
+                {quoteError && <p role="alert" className="mt-4 text-red-700">{quoteError}</p>}
+                <output className="sr-only" data-testid="quote-total" data-amount={serverQuote?.totalAmount ?? ''}>{serverQuote ? displayPrice(serverQuote.totalAmount) : 'Devis en cours'}</output>
                 {/* Bouton confirmer */}
                 <button
                   type="submit"
-                  disabled={isSubmitting}
+                  disabled={isSubmitting || isQuoteLoading || !serverQuote || acceptedQuoteKey !== quoteKey || !!quoteError}
                   className="mt-6 w-full py-4 px-6 bg-gradient-to-r from-orange-500 to-orange-600 text-white rounded-xl font-bold text-lg hover:from-orange-600 hover:to-orange-700 shadow-lg transition-all flex items-center justify-center gap-2 disabled:opacity-60 disabled:cursor-not-allowed"
                 >
                   {isSubmitting ? (

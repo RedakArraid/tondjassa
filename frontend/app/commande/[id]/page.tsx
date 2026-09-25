@@ -110,26 +110,11 @@ export default function OrderConfirmationPage() {
             <div className="w-12 h-12 border-4 border-orange-500 border-t-transparent rounded-full animate-spin" />
           </div>
         ) : error || !order ? (
-          /* Fallback si la commande n'est pas accessible via l'API publique */
-          <div className="bg-white rounded-3xl shadow-xl border border-gray-100 overflow-hidden">
-            <div className="bg-gradient-to-r from-green-400 to-green-500 h-2" />
-            <div className="p-8 sm:p-12 text-center">
-              <div className="flex items-center justify-center mb-6">
-                <div className="w-24 h-24 bg-green-100 rounded-full flex items-center justify-center animate-pulse">
-                  <CheckCircleIcon className="w-14 h-14 text-green-500" />
-                </div>
-              </div>
-              <h1 className="text-3xl sm:text-4xl font-bold text-gray-900 mb-3">Commande confirmée !</h1>
-              <p className="text-gray-500 text-lg mb-6">Merci pour votre confiance.</p>
-              {orderId && (
-                <div className="inline-flex flex-col items-center bg-green-50 border-2 border-green-200 rounded-2xl px-6 py-4 mb-8">
-                  <span className="text-xs font-semibold text-green-600 uppercase tracking-widest mb-1">Numéro de commande</span>
-                  <span className="text-xl font-bold text-green-700 font-mono">#{orderId.slice(0, 8).toUpperCase()}</span>
-                </div>
-              )}
-              <FallbackSteps />
-              <ActionButtons orderId={orderId} isCI={false} />
-            </div>
+          <div role="alert" className="bg-white rounded-3xl shadow-xl border border-gray-100 p-8 sm:p-12 text-center">
+            <h1 className="text-3xl font-bold text-gray-900 mb-3">Commande inaccessible</h1>
+            <p className="text-gray-600 mb-6">Impossible de consulter cette commande. Utilisez le lien de votre email de confirmation ou connectez-vous au compte qui a effectué l'achat.</p>
+            <Link href="/compte/login" className="text-orange-700 font-semibold">Se connecter</Link>
+            <p className="mt-4 text-sm text-gray-500">Aucun statut de commande ou de paiement ne peut être confirmé sur cette page.</p>
           </div>
         ) : (
           /* Commande chargée avec succès */
@@ -147,7 +132,7 @@ export default function OrderConfirmationPage() {
               </div>
 
               <h1 className="text-3xl sm:text-4xl font-bold text-gray-900 mb-2 text-center">
-                Commande confirmée !
+                {order.status === 'PENDING' ? 'Commande enregistrée' : 'Suivi de votre commande'}
               </h1>
               <p className="text-gray-500 text-center mb-6">
                 {order.customer.firstName}, merci pour votre commande.
