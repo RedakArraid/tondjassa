@@ -116,6 +116,23 @@ jobs:
           bash backend/scripts/restore-db.sh "$backup"
           test "$("${compose[@]}" exec -T postgres psql -U postgres -d "$RESTORE_DATABASE" -Atc "SELECT count(*) FROM smoke_backup WHERE marker='restore-proof'")" = 1
           "${compose[@]}" exec -T backend npm run production:preflight
+      - name: Bounded load smoke against production images
+        env:
+          LOAD_API_URL: http://127.0.0.1:4002
+          LOAD_WEB_URL: http://127.0.0.1:3000
+          LOAD_REQUESTS: '60'
+          LOAD_CONCURRENCY: '12'
+          LOAD_MAX_P95_MS: '1500'
+          LOAD_RESULT: qa-results/load-smoke.json
+        run: node scripts/load-smoke.mjs
+      - name: Preserve load-smoke evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: load-smoke-${{ github.sha }}
+          path: qa-results/load-smoke.json
+          if-no-files-found: warn
+          retention-days: 14
       - name: Container diagnostics
         if: failure()
         run: docker compose --env-file "$RUNNER_TEMP/smoke.env" -p tondjassa-ci -f .github/compose.smoke.yml logs --tail=100 || true
@@ -169,7 +186,7 @@ jobs:
             gates: {
               quality: 'success',
               postgresqlIntegration: 'success',
-              productionContainersAndRestore: 'success'
+              productionContainersRestoreAndLoadSmoke: 'success'
             },
             versions: {
               root: root.version || null,
