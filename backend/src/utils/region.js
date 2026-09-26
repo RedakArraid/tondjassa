@@ -26,6 +26,7 @@ const COUNTRY_NAME_MAP = {
 
 // Parité légale fixe CFA : 1 EUR = 655.957 XOF
 const EUR_XOF_RATE = 655.957;
+const DEFAULT_CHECKOUT_COUNTRIES = ['CI', 'FR'];
 
 function resolveCountryCode(input) {
   if (!input) return null;
@@ -39,6 +40,29 @@ function detectRegion(countryInput) {
   if (!code) return 'africa';
   if (EUROPE_CODES.has(code)) return 'europe';
   return 'africa';
+}
+
+function isKnownCountryCode(countryInput) {
+  const code = resolveCountryCode(countryInput);
+  return Boolean(code && (AFRICA_CODES.has(code) || EUROPE_CODES.has(code)));
+}
+
+function isCheckoutCountrySupported(countryInput) {
+  const code = resolveCountryCode(countryInput);
+  return Boolean(code && (code === 'CI' || EUROPE_CODES.has(code)));
+}
+
+function getCheckoutCountries() {
+  const configured = process.env.CHECKOUT_COUNTRIES || DEFAULT_CHECKOUT_COUNTRIES.join(',');
+  return [...new Set(configured
+    .split(',')
+    .map((country) => resolveCountryCode(country))
+    .filter((country) => country && isCheckoutCountrySupported(country)))];
+}
+
+function isCheckoutCountryEnabled(countryInput) {
+  const code = resolveCountryCode(countryInput);
+  return Boolean(code && getCheckoutCountries().includes(code));
 }
 
 // DB centimes XOF → EUR cents (pour Stripe)
@@ -55,8 +79,13 @@ module.exports = {
   AFRICA_CODES,
   EUROPE_CODES,
   EUR_XOF_RATE,
+  DEFAULT_CHECKOUT_COUNTRIES,
   resolveCountryCode,
   detectRegion,
+  isKnownCountryCode,
+  isCheckoutCountrySupported,
+  getCheckoutCountries,
+  isCheckoutCountryEnabled,
   xofCentimesToEurCents,
   eurCentsToXofCentimes,
 };

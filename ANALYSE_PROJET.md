@@ -1,6 +1,6 @@
 # 📊 Analyse Complète du Projet MandeMarket
 
-**Date d'analyse** : 2026-05-01  
+**Date d'analyse** : 2026-09-26
 **Version du projet** : 2.1.0  
 **Type** : Marketplace e-commerce full-stack
 
@@ -16,7 +16,7 @@
 - ✅ Marketplace (**Seller**, commissions, **SellerPayout**)
 - ✅ Frontend Next.js 14 avec TypeScript ; backend Express avec Prisma
 - ✅ PostgreSQL + Redis ; images **Cloudinary**
-- ✅ Espace client (`/api/account`), paiements (**Paystack / Stripe / CinetPay** selon `.env`)
+- ✅ Espace client (`/api/account`), paiements (**Paystack** en Côte d'Ivoire, XOF / **Stripe** en Europe selon `.env`)
 - ✅ Administration, espace vendeur, avis produits (`Review`)
 
 ---
@@ -26,8 +26,8 @@
 ### Stack Technologique
 
 #### Frontend
-- **Framework** : Next.js 14 (React 18)
-- **Language** : TypeScript 5.3
+- **Framework** : Next.js 16.3.6 (React 19.2)
+- **Language** : TypeScript 5.9
 - **Styling** : Tailwind CSS 3.4
 - **Gestion d'état** : React Context API
 - **Requêtes** : @tanstack/react-query
@@ -35,9 +35,9 @@
 - **Icons** : @heroicons/react
 
 #### Backend
-- **Framework** : Express.js 4.18
-- **Language** : JavaScript (Node.js 18+)
-- **ORM** : Prisma 5.7
+- **Framework** : Express.js 4.21
+- **Language** : JavaScript (Node.js 24)
+- **ORM** : Prisma 6.19
 - **Base de données** : PostgreSQL
 - **Validation** : Zod 3.22
 - **Authentification** : JWT (jsonwebtoken)
@@ -237,7 +237,7 @@ Toutes les routes ci-dessous sont montées sous le préfixe indiqué (ex. `/api/
 - Admin : `/admin/all`, `/admin/payouts`, mises à jour statut / versements
 
 ### Paiement (`/api/payment`)
-- `POST /initiate`, webhooks Paystack / CinetPay / Stripe, `GET /status/:orderId`, etc.
+- `POST /initiate`, webhooks Paystack / Stripe, `GET /status/:orderId`, etc.
 
 ### Livraison (`/api/shipping`)
 - `GET /options`, `POST /rates`, `GET /track/:trackingNumber`, `POST /create/:orderId` (admin pour création)
@@ -609,16 +609,15 @@ NEXT_PUBLIC_SITE_URL=https://mandemarket.soubadigital.com
 - ✅ Fonctionnalités e-commerce complètes
 - ✅ Interface d'administration robuste
 - ✅ Design moderne et UX soignée
-- ✅ Infrastructure Docker prête pour la production
+- ⚠️ Infrastructure Docker durcie, soumise aux gates de recette et d'exploitation
 - ✅ Sécurité implémentée
 - ✅ Documentation détaillée
 
-Le projet est **prêt pour la production** avec quelques améliorations possibles (tests, monitoring, performance) pour un déploiement en grande échelle.
+Le projet reste un **candidat de release**. La mise en production est bloquée tant que les gates CI, la recette sandbox Paystack/Stripe, la validation SMTP/Traefik, les alertes et un exercice de restauration externe ne sont pas prouvés sur le SHA livré.
 
-**Recommandation** : Excellent projet, bien structuré, avec un bon potentiel d'évolution.
+**Recommandation** : utiliser `docs/RELEASE_GATES.md` et `docs/DEPLOYMENT_RUNBOOK.md` comme autorité avant toute ouverture client.
 
 ---
 
 **Date de la présente révision** : 2026-05-01 (sync dépôt + écart `/api/analytics`)  
 **Version projet** : 2.1.0 (racine `package.json`)
-

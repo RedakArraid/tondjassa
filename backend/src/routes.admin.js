@@ -21,7 +21,7 @@ router.get('/users', async (req, res) => {
     const skip = (pageNum - 1) * limitNum;
 
     const where = {};
-    if (role && ['user', 'customer', 'seller', 'manager', 'admin'].includes(role)) {
+    if (role && ['user', 'customer', 'seller', 'manager', 'support', 'admin'].includes(role)) {
       where.role = role;
     }
     if (search) {
@@ -95,7 +95,7 @@ router.post('/users', async (req, res) => {
     if (req.user.role !== 'admin') {
       return res.status(403).json({ error: 'Seul un administrateur peut créer des comptes de gestion' });
     }
-    if (!['manager', 'admin'].includes(role)) {
+    if (!['manager', 'support', 'admin'].includes(role)) {
       return res.status(400).json({
         error: 'Les clients et vendeurs doivent être créés par leurs parcours d’inscription afin de générer les profils métier associés.',
       });
@@ -149,7 +149,7 @@ router.post('/users', async (req, res) => {
 router.put('/users/:id/role', async (req, res) => {
   try {
     const { role } = req.body;
-    if (!['user', 'customer', 'seller', 'manager', 'admin'].includes(role)) {
+    if (!['user', 'customer', 'seller', 'manager', 'support', 'admin'].includes(role)) {
       return res.status(400).json({ error: 'Rôle invalide' });
     }
     if (req.user.role !== 'admin') {
@@ -173,7 +173,7 @@ router.put('/users/:id/role', async (req, res) => {
     if (role === 'customer' && !targetUser.customer) {
       return res.status(409).json({ error: 'Ce compte ne possède pas de profil client vérifié.' });
     }
-    if (['admin', 'manager'].includes(role) && !targetUser.emailVerifiedAt) {
+    if (['admin', 'manager', 'support'].includes(role) && !targetUser.emailVerifiedAt) {
       return res.status(409).json({ error: 'Vérifiez l’adresse email avant d’accorder des privilèges de gestion.' });
     }
 

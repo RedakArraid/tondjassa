@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import { useSellerAccess } from './access';
 
 export function SellerActionButton({
   children,
@@ -10,6 +11,7 @@ export function SellerActionButton({
   type = 'button',
   disabled,
   size = 'md',
+  permission,
 }: {
   children: React.ReactNode;
   href?: string;
@@ -18,7 +20,11 @@ export function SellerActionButton({
   type?: 'button' | 'submit';
   disabled?: boolean;
   size?: 'sm' | 'md';
+  permission?: string;
 }) {
+  const { can } = useSellerAccess();
+  const inferredPermission = href?.includes('/produits/ajouter') ? 'catalog.write' : undefined;
+  if ((permission || inferredPermission) && !can(permission || inferredPermission!)) return null;
   const styles = {
     primary: 'bg-brand-orange text-white hover:bg-brand-orange-dark border border-transparent',
     secondary: 'bg-white text-brand-navy border border-gray-200 hover:bg-gray-50',
@@ -100,6 +106,7 @@ export function SellerEmptyState({
   actionLabel,
   actionHref,
   onAction,
+  actionPermission,
 }: {
   title?: string;
   description?: string;
@@ -107,14 +114,18 @@ export function SellerEmptyState({
   actionLabel?: string;
   actionHref?: string;
   onAction?: () => void;
+  actionPermission?: string;
 }) {
+  const { can } = useSellerAccess();
   const displayTitle = title || message || 'Aucun élément trouvé';
   const displayDesc = description || (title && message ? message : '');
+  const inferredPermission = actionHref?.includes('/produits/ajouter') ? 'catalog.write' : undefined;
+  const canShowAction = !(actionPermission || inferredPermission) || can(actionPermission || inferredPermission!);
   return (
     <div className="text-center py-14 px-4">
       <p className="text-lg font-semibold text-brand-navy">{displayTitle}</p>
       {displayDesc && <p className="text-sm text-gray-500 mt-2 max-w-md mx-auto">{displayDesc}</p>}
-      {actionLabel && actionHref && (
+      {canShowAction && actionLabel && actionHref && (
         <Link
           href={actionHref}
           className="inline-flex mt-5 px-4 py-2.5 rounded-lg bg-brand-orange text-white text-sm font-semibold hover:bg-brand-orange-dark transition"
@@ -122,7 +133,7 @@ export function SellerEmptyState({
           {actionLabel}
         </Link>
       )}
-      {actionLabel && onAction && !actionHref && (
+      {canShowAction && actionLabel && onAction && !actionHref && (
         <button
           type="button"
           onClick={onAction}
@@ -169,6 +180,7 @@ export function FilterChips({
           key={opt}
           type="button"
           onClick={() => onChange(opt)}
+          aria-pressed={value === opt}
           className={`px-3 py-1.5 rounded-full text-xs font-semibold border transition ${
             value === opt
               ? 'bg-brand-orange text-white border-brand-orange'
@@ -189,16 +201,10 @@ export function PeriodSelector({
   value: string;
   onChange: (v: string) => void;
 }) {
-  const options = ['Aujourd’hui', '7 jours', '30 jours', '3 mois', 'Cette année', 'Personnaliser'];
+  const options = ['Aujourd’hui', '7 jours', '30 jours', '3 mois', 'Cette année', 'Toutes périodes'];
   return <FilterChips options={options} value={value} onChange={onChange} />;
 }
 
 export function RowActions({ children }: { children: React.ReactNode }) {
   return <div className="flex flex-wrap gap-1.5">{children}</div>;
-}
-
-export function notifySoon(action = 'Cette action') {
-  if (typeof window !== 'undefined') {
-    window.alert(`${action} sera disponible après branchement API.`);
-  }
 }

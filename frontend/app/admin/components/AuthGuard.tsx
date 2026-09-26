@@ -43,6 +43,8 @@ export default function AuthGuard({ children }: AuthGuardProps) {
         if (!user || !ALLOWED_ROLES.includes(user.role)) {
           if (user?.role === 'seller') {
             router.push('/vendeur/dashboard');
+          } else if (user?.role === 'support') {
+            router.push('/support/dashboard');
           } else {
             router.push('/admin/login?error=unauthorized');
           }

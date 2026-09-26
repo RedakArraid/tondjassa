@@ -12,7 +12,10 @@ const productSchema = z.object({
   categoryId: z.string().min(1),
   image: z.string().optional(),
   images: z.array(z.string()).optional(),
-  description: z.string().optional(),
+  // Product.description is required by Prisma. Keep it optional for callers but
+  // always materialise a valid value before create (admin/seller quick forms may
+  // legitimately leave the description empty).
+  description: z.string().optional().default(''),
   stock: z.number().int().nonnegative().optional(),
   status: z.enum(['draft', 'active', 'archived']).optional(),
   sku: z.string().optional(),
@@ -409,4 +412,4 @@ router.delete('/:id', requireAuth, requireProductWrite, async (req, res) => {
   }
 });
 
-module.exports = router; 
+module.exports = router;

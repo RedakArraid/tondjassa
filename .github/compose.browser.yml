@@ -19,7 +19,6 @@ services:
       NODE_EXTRA_CA_CERTS: /qa-certs/cert.pem
       PAYSTACK_SECRET_KEY: ''
       STRIPE_SECRET_KEY: ''
-      CINETPAY_API_KEY: ''
     volumes:
       - ${QA_CERTS_DIR:?QA_CERTS_DIR required}:/qa-certs:ro
       - ../e2e:/app/e2e:ro

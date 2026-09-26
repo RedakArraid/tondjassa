@@ -1,19 +1,19 @@
 const express = require('express');
-const crypto = require('crypto');
 const router = express.Router();
 const { z } = require('zod');
 const db = require('./db');
 const emailService = require('./services/email.service');
+const supportTickets = require('./services/support-ticket.service');
 
 // Schéma contact
 const contactSchema = z.object({
-  name: z.string().min(2, 'Le nom est requis (au moins 2 caractères)'),
-  email: z.string().email('Adresse email invalide'),
-  phone: z.string().optional().nullable(),
-  subject: z.string().min(3, 'Le sujet est requis'),
-  message: z.string().min(10, 'Le message doit contenir au moins 10 caractères'),
+  name: z.string().trim().min(2, 'Le nom est requis (au moins 2 caractères)').max(120),
+  email: z.string().trim().toLowerCase().email('Adresse email invalide'),
+  phone: z.string().trim().max(40).optional().nullable(),
+  subject: z.string().trim().min(3, 'Le sujet est requis').max(160),
+  message: z.string().trim().min(10, 'Le message doit contenir au moins 10 caractères').max(5000),
   honeypot: z.string().optional(), // Anti-spam bot trap
-});
+}).strict();
 
 // POST /api/contact - Envoi d'un message au support
 router.post('/', async (req, res) => {
@@ -26,11 +26,23 @@ router.post('/', async (req, res) => {
       return res.status(200).json({ success: true, message: 'Message reçu' });
     }
 
+    const ticket = await supportTickets.createTicket({
+      source: 'CONTACT',
+      category: 'Contact',
+      subject: data.subject,
+      message: data.message,
+      requesterName: data.name,
+      requesterEmail: data.email,
+      requesterPhone: data.phone || null,
+      ipAddress: req.ip,
+      userAgent: req.headers['user-agent'] || null,
+    });
+
     const sent = await emailService.sendContactMessageNotification({
       name: data.name,
       email: data.email,
       phone: data.phone,
-      subject: data.subject,
+      subject: `[Ticket ${ticket.reference}] ${data.subject}`,
       message: data.message,
     });
     if (!sent.success) {
@@ -44,8 +56,8 @@ router.post('/', async (req, res) => {
         data: {
           action: 'CONTACT_MESSAGE_DELIVERED',
           entity: 'Contact',
-          entityId: crypto.createHash('sha256').update(data.email.trim().toLowerCase()).digest('hex'),
-          details: { subject: data.subject, hasPhone: Boolean(data.phone), messageId: sent.messageId || null },
+          entityId: ticket.id,
+          details: { reference: ticket.reference, subject: data.subject, hasPhone: Boolean(data.phone), messageId: sent.messageId || null },
           ipAddress: req.ip,
           userAgent: req.headers['user-agent'] || null,
         },
@@ -57,6 +69,8 @@ router.post('/', async (req, res) => {
     res.json({
       success: true,
       message: 'Votre message a bien été envoyé. Notre équipe vous répondra dans les plus brefs délais.',
+      ticketId: ticket.id,
+      reference: ticket.reference,
     });
   } catch (err) {
     if (err.name === 'ZodError') {

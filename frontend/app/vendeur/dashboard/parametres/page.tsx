@@ -4,8 +4,11 @@ import React, { useEffect, useState } from 'react';
 import { SellerService } from '../../../config/api';
 import { Spinner } from '../_components/sections';
 import { SellerPageHeader, SellerCard } from '../_components/ui';
+import { useSellerAccess } from '../_components/access';
 
 export default function ComptePage() {
+  const { can } = useSellerAccess();
+  const canWrite = can('settings.write');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [storeName, setStoreName] = useState('');
@@ -74,6 +77,7 @@ export default function ComptePage() {
 
       <SellerCard title="Informations de la boutique">
         <form onSubmit={handleSave} className="space-y-4 max-w-2xl">
+          <fieldset disabled={!canWrite} className="space-y-4 disabled:opacity-75">
           <div className="grid sm:grid-cols-2 gap-4">
             <div>
               <label className="block text-xs font-semibold text-gray-700 mb-1">Nom de la boutique</label>
@@ -119,7 +123,7 @@ export default function ComptePage() {
             />
           </div>
 
-          <div className="pt-2">
+          {canWrite && <div className="pt-2">
             <button
               type="submit"
               disabled={saving}
@@ -127,8 +131,10 @@ export default function ComptePage() {
             >
               {saving ? 'Enregistrement...' : 'Enregistrer les modifications'}
             </button>
-          </div>
+          </div>}
+          </fieldset>
         </form>
+        {!canWrite && <p className="mt-4 text-xs text-gray-500">Consultation uniquement : votre rôle ne permet pas de modifier la boutique.</p>}
       </SellerCard>
     </div>
   );

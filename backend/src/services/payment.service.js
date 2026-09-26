@@ -1,21 +1,23 @@
 const db = require('../db');
 const { OrderService } = require('./order.service');
-const { xofCentimesToEurCents } = require('../utils/region');
+const { resolveCountryCode, xofCentimesToEurCents } = require('../utils/region');
 const { transaction, lockOrder, httpError } = require('./transaction');
 const LedgerService = require('./ledger.service');
+const Inventory = require('./inventory.service');
 const paystackService = require('./paystack.service');
 const stripeService = require('./stripe.service');
-const cinetpayService = require('./cinetpay.service');
+
+const PROCESSING_TTL_MINUTES = Math.min(240, Math.max(15, Number(process.env.PAYMENT_PROCESSING_TTL_MINUTES) || 60));
 
 // Internal money is always XOF hundredths. Provider adapters explicitly define
-// their units: Stripe EUR cents / whole XOF, Paystack and CinetPay adapter XOF cents.
+// their units: Stripe EUR cents and Paystack XOF cents.
 function expectedPayment(order, gateway) {
   if (gateway === 'manual') return { amount: order.totalAmount, currency: 'XOF' };
-  if (gateway === 'stripe') return order.currency === 'EUR'
-    ? { amount: xofCentimesToEurCents(order.totalAmount), currency: 'EUR' }
-    : { amount: Math.round(order.totalAmount / 100), currency: 'XOF' };
-  if (!['paystack', 'cinetpay'].includes(gateway) || order.currency === 'EUR') throw httpError('Passerelle incompatible', 400);
-  return { amount: gateway === 'cinetpay' ? Math.round(order.totalAmount / 100) * 100 : order.totalAmount, currency: 'XOF' };
+  if (gateway === 'stripe' && order.currency === 'EUR') return { amount: xofCentimesToEurCents(order.totalAmount), currency: 'EUR' };
+  if (gateway === 'paystack' && order.currency !== 'EUR' && resolveCountryCode(order.shippingAddress?.country) === 'CI') {
+    return { amount: order.totalAmount, currency: 'XOF' };
+  }
+  throw httpError('Passerelle incompatible avec la region de la commande', 400);
 }
 
 class PaymentService {
@@ -45,7 +47,6 @@ class PaymentService {
     if (returnBaseUrl && new URL(returnBaseUrl).origin !== new URL(BASE_URL).origin) {
       throw httpError('URL de retour non autorisee', 400);
     }
-    const API_BASE = process.env.BACKEND_URL || process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4002';
     const successUrl = `${BASE_URL}/checkout/success?orderId=${orderId}`;
     const cancelUrl = `${BASE_URL}/checkout/cancel?orderId=${orderId}`;
 
@@ -56,11 +57,11 @@ class PaymentService {
     if (!order.customer.email) throw httpError('Identite de facturation manquante', 409);
     let effectiveGateway = gateway?.toLowerCase();
 
-    const CI_MOBILE_OPERATORS = new Set(['mtn_momo', 'orange_money', 'wave', 'moov_money']);
+    const CI_MOBILE_OPERATORS = new Set(['mtn_momo', 'orange_money', 'wave']);
     let operatorSlug = null;
     if (CI_MOBILE_OPERATORS.has(effectiveGateway)) {
       operatorSlug = effectiveGateway;
-      effectiveGateway = operatorSlug === 'moov_money' ? 'cinetpay' : 'paystack';
+      effectiveGateway = 'paystack';
     }
 
     if (!effectiveGateway) {
@@ -68,13 +69,14 @@ class PaymentService {
     }
 
     // Protection cohérence région
-    if (isEurope) {
-      effectiveGateway = 'stripe';
+    if ((isEurope && effectiveGateway !== 'stripe') || (!isEurope && effectiveGateway !== 'paystack')) {
+      throw httpError('Passerelle incompatible avec la region de la commande', 400);
     }
-
-    if (effectiveGateway === 'paystack' && !paystackService.isConfigured()) effectiveGateway = 'cinetpay';
-    if (!['stripe', 'paystack', 'cinetpay'].includes(effectiveGateway)) throw httpError('Passerelle invalide', 400);
-    if ((effectiveGateway === 'cinetpay' && !cinetpayService.isConfigured()) || (effectiveGateway === 'stripe' && !process.env.STRIPE_SECRET_KEY)) throw httpError('Passerelle non configuree', 503);
+    if (effectiveGateway === 'paystack' && resolveCountryCode(order.shippingAddress?.country) !== 'CI') {
+      throw httpError('Paystack XOF est disponible uniquement pour la Cote d’Ivoire', 400);
+    }
+    if ((effectiveGateway === 'paystack' && !paystackService.isConfigured()) ||
+        (effectiveGateway === 'stripe' && !stripeService.isConfigured())) throw httpError('Passerelle non configuree', 503);
     // Claim one immutable payment attempt before any external request. A timeout is
     // ambiguous: retain PROCESSING and reconcile it; never create another charge.
     const claim = await transaction(async (tx) => {
@@ -90,9 +92,11 @@ class PaymentService {
         }
         throw httpError('Paiement deja initialise; verifiez son statut avant toute nouvelle tentative');
       }
-      const reference = effectiveGateway === 'cinetpay' ? orderId : effectiveGateway === 'paystack' ? `MM-${payment.id}` : null;
+      const reference = effectiveGateway === 'paystack' ? `MM-${payment.id}` : null;
+      const processingExpiresAt = new Date(Date.now() + PROCESSING_TTL_MINUTES * 60000);
       await tx.payment.update({ where: { id: payment.id }, data: {
         status: 'PROCESSING', gateway: effectiveGateway, transactionId: reference,
+        processingExpiresAt, verificationAttempts: 0,
         metadata: { attemptStartedAt: new Date().toISOString() },
       } });
       return { paymentId: payment.id, reference };
@@ -101,28 +105,15 @@ class PaymentService {
     let result;
 
     if (effectiveGateway === 'paystack') {
-      if (!paystackService.isConfigured()) {
-        // Fallback sécurisé vers CinetPay
-        const notifyUrl = `${API_BASE}/api/payment/notify/cinetpay`;
-        result = await cinetpayService.initiatePayment({
-          orderId,
-          amount: order.totalAmount,
-          customer: order.customer,
-          returnUrl: successUrl,
-          notifyUrl,
-        });
-        effectiveGateway = 'cinetpay';
-      } else {
-        result = await paystackService.initializeTransaction({
-          orderId,
-          amount: order.totalAmount,
-          email: order.customer.email,
-          callbackUrl: successUrl,
-          mobilePhone: order.customer.phone,
-          operatorGateway: operatorSlug || operatorGateway,
-          reference: claim.reference,
-        });
-      }
+      result = await paystackService.initializeTransaction({
+        orderId,
+        amount: order.totalAmount,
+        email: order.customer.email,
+        callbackUrl: successUrl,
+        mobilePhone: order.customer.phone,
+        operatorGateway: operatorSlug || operatorGateway,
+        reference: claim.reference,
+      });
     } else if (effectiveGateway === 'stripe') {
       const currency = isEurope ? 'eur' : 'xof';
       result = await stripeService.createCheckoutSession({
@@ -133,15 +124,6 @@ class PaymentService {
         cancelUrl,
         currency,
         idempotencyKey: `checkout-${claim.paymentId}`,
-      });
-    } else if (effectiveGateway === 'cinetpay') {
-      const notifyUrl = `${API_BASE}/api/payment/notify/cinetpay`;
-      result = await cinetpayService.initiatePayment({
-        orderId,
-        amount: order.totalAmount,
-        customer: order.customer,
-        returnUrl: successUrl,
-        notifyUrl,
       });
     } else {
       const err = new Error(`Passerelle de paiement non supportée: ${effectiveGateway}`);
@@ -189,7 +171,9 @@ class PaymentService {
       const idempotencyKey = `settlement:${order.id}`;
       const settled = await tx.paymentEvent.findUnique({ where: { idempotencyKey } });
       if (settled?.status === 'PROCESSED') throw httpError('Paiement incoherent: reconciliation requise');
-      await tx.payment.update({ where: { id: payment.id }, data: { status: 'COMPLETED', transactionId, gateway } });
+      await tx.payment.update({ where: { id: payment.id }, data: {
+        status: 'COMPLETED', transactionId, gateway, processingExpiresAt: null,
+      } });
       await tx.paymentEvent.create({ data: {
         orderId, paymentId: payment.id, gateway, eventType: 'PAYMENT_SUCCESS', idempotencyKey,
         status: 'PROCESSED', payload: { eventId, transactionId, amountPaid, currency, credited: order.status !== 'CANCELLED', providerStatus: rawPayload?.status || null },
@@ -247,13 +231,89 @@ class PaymentService {
       if (!payment) throw httpError('Commande introuvable', 404);
       if (payment.gateway !== gateway || (payment.transactionId && payment.transactionId !== transactionId)) throw httpError('Reference incoherente');
       if (['COMPLETED', 'REFUNDED'].includes(payment.status)) return { success: true, ignored: true };
-      await tx.payment.update({ where: { id: payment.id }, data: { status: 'FAILED' } });
       const key = `${gateway}:failure:${eventId || transactionId}`;
-      await tx.paymentEvent.upsert({ where: { idempotencyKey: key }, create: {
+      const existing = await tx.paymentEvent.findUnique({ where: { idempotencyKey: key } });
+      if (existing) return { success: true, alreadyProcessed: true, status: payment.status };
+      await tx.payment.update({ where: { id: payment.id }, data: { status: 'FAILED', processingExpiresAt: null } });
+      await tx.paymentEvent.create({ data: {
         orderId, paymentId: payment.id, gateway, eventType: 'PAYMENT_FAILED', idempotencyKey: key,
         payload: { transactionId, reason }, status: 'PROCESSED',
-      }, update: {} });
+      } });
+      const order = await tx.order.findUnique({ where: { id: orderId } });
+      if (order?.status === 'PENDING') {
+        await OrderService.transitionOrderStatus(orderId, 'CANCELLED', { reason: reason || 'Paiement expire ou refuse' }, tx);
+      }
       return { success: true, status: 'FAILED' };
+    });
+  }
+
+  // Provider-originated full refunds and chargebacks use one atomic reversal.
+  static async processProviderReversal({ orderId, gateway, transactionId, providerReference, amount, currency, eventId, kind }) {
+    if (!eventId || !providerReference) throw httpError('Reference de remboursement manquante', 400);
+    return transaction(async (tx) => {
+      await lockOrder(tx, orderId);
+      const key = `reversal:${gateway}:${eventId}`;
+      const seen = await tx.paymentEvent.findUnique({ where: { idempotencyKey: key } });
+      if (seen) return { success: true, alreadyProcessed: true };
+      const order = await tx.order.findUnique({ where: { id: orderId }, include: { payment: true, items: true } });
+      if (!order?.payment) throw httpError('Commande introuvable', 404);
+      if (order.payment.gateway !== gateway || (transactionId && order.payment.transactionId !== transactionId)) {
+        throw httpError('Reference de transaction incoherente', 409);
+      }
+      const expected = expectedPayment(order, gateway);
+      if (!Number.isSafeInteger(amount) || amount !== expected.amount || currency?.toUpperCase() !== expected.currency) {
+        throw httpError('Seuls les remboursements integraux conformes sont automatises', 409);
+      }
+      if (order.payment.status === 'REFUNDED') {
+        await tx.paymentEvent.create({ data: { orderId, paymentId: order.payment.id, gateway,
+          eventType: kind, idempotencyKey: key, payload: { providerReference }, status: 'IGNORED' } });
+        return { success: true, alreadyProcessed: true };
+      }
+      if (order.payment.status !== 'COMPLETED') throw httpError('Paiement non rapproche', 409);
+
+      for (const item of [...order.items].sort((a, b) => a.productId - b.productId)) {
+        if (!item.stockCommittedAt && !item.stockRestoredAt) await Inventory.release(tx, item);
+      }
+      if (order.promotionCode) await tx.promotion.updateMany({ where: { code: order.promotionCode, usedCount: { gt: 0 } }, data: { usedCount: { decrement: 1 } } });
+      await LedgerService.recordOrderRefund(orderId, { reason: kind }, tx);
+      const settlement = await tx.paymentEvent.findUnique({ where: { idempotencyKey: `settlement:${orderId}` } });
+      if (settlement?.payload?.credited) {
+        await tx.customer.update({ where: { id: order.customerId }, data: { totalSpent: { decrement: order.totalAmount } } });
+        for (const item of [...order.items].sort((a, b) => String(a.sellerId).localeCompare(String(b.sellerId)))) {
+          if (item.sellerId) await tx.seller.update({ where: { id: item.sellerId }, data: {
+            totalSales: { decrement: item.totalPrice }, totalEarnings: { decrement: item.sellerEarnings },
+          } });
+        }
+      }
+      await tx.orderItem.updateMany({ where: { orderId }, data: { fulfillmentStatus: 'REFUNDED' } });
+      await tx.shipping.updateMany({ where: { orderId }, data: { status: 'RETURNED' } });
+      await tx.order.update({ where: { id: orderId }, data: { status: 'REFUNDED' } });
+      await tx.payment.update({ where: { id: order.payment.id }, data: { status: 'REFUNDED', processingExpiresAt: null } });
+      await tx.refund.upsert({ where: { orderId }, create: { orderId, gateway, transactionId,
+        amount: order.totalAmount, currency: 'XOF', reason: kind, providerReference, status: 'COMPLETED', completedAt: new Date() },
+      update: { providerReference, status: 'COMPLETED', completedAt: new Date(), error: null } });
+      await tx.paymentEvent.create({ data: { orderId, paymentId: order.payment.id, gateway,
+        eventType: kind, idempotencyKey: key, payload: { providerReference, amount, currency }, status: 'PROCESSED' } });
+      return { success: true, alreadyProcessed: false };
+    });
+  }
+
+  static async recordProviderAlert({ orderId, gateway, transactionId, eventId, eventType, payload }) {
+    if (!orderId || !eventId || !eventType) throw httpError('Evenement fournisseur incomplet', 400);
+    return transaction(async (tx) => {
+      await lockOrder(tx, orderId);
+      const payment = await tx.payment.findUnique({ where: { orderId } });
+      if (!payment || payment.gateway !== gateway || (transactionId && payment.transactionId !== transactionId)) {
+        throw httpError('Reference de transaction incoherente', 409);
+      }
+      const idempotencyKey = `provider-alert:${gateway}:${eventId}`;
+      const existing = await tx.paymentEvent.findUnique({ where: { idempotencyKey } });
+      if (existing) return { success: true, alreadyProcessed: true };
+      await tx.paymentEvent.create({ data: { orderId, paymentId: payment.id, gateway, eventType,
+        idempotencyKey, payload: payload || {}, status: 'REQUIRES_ACTION' } });
+      await tx.auditLog.create({ data: { action: eventType, entity: 'Payment', entityId: payment.id,
+        details: { gateway, transactionId, eventId, ...(payload || {}) } } });
+      return { success: true, alreadyProcessed: false };
     });
   }
 }

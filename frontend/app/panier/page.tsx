@@ -18,10 +18,25 @@ import {
 export default function CartPage() {
   const { items, totalItems, totalPrice, updateQuantity, removeItem, clearCart } = useCart();
   const [isProcessing, setIsProcessing] = useState(false);
+  const [promoCode, setPromoCode] = useState('');
+  const [promoMessage, setPromoMessage] = useState('');
   const router = useRouter();
 
   const handleCheckout = () => {
+    setIsProcessing(true);
     router.push('/checkout');
+  };
+
+  const handlePromoSubmit = (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const code = promoCode.trim().toUpperCase();
+    if (!code) {
+      setPromoMessage('Saisissez un code promo.');
+      return;
+    }
+    sessionStorage.setItem('mm_pending_promo', code);
+    setPromoCode(code);
+    setPromoMessage('Code enregistré. Il sera vérifié dans le récapitulatif de paiement.');
   };
 
   if (items.length === 0) {
@@ -129,9 +144,11 @@ export default function CartPage() {
 
                         {/* Supprimer */}
                         <button
+                          type="button"
                           onClick={() => removeItem(item.product.id, item.selectedColor)}
                           className="p-2 text-red-600 hover:text-red-700 hover:bg-red-50 rounded-lg transition-colors"
                           title="Supprimer"
+                          aria-label={`Supprimer ${item.product.name} du panier`}
                         >
                           <TrashIcon className="w-5 h-5" />
                         </button>
@@ -141,9 +158,11 @@ export default function CartPage() {
                       <div className="flex items-center justify-between mt-4">
                         <div className="flex items-center border-2 border-gray-300 rounded-xl overflow-hidden">
                           <button
+                            type="button"
                             onClick={() => updateQuantity(item.product.id, item.quantity - 1, item.selectedColor)}
                             disabled={item.quantity <= 1}
                             className="p-2 hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                            aria-label={`Diminuer la quantité de ${item.product.name}`}
                           >
                             <MinusIcon className="w-4 h-4" />
                           </button>
@@ -151,9 +170,11 @@ export default function CartPage() {
                             {item.quantity}
                           </span>
                           <button
+                            type="button"
                             onClick={() => updateQuantity(item.product.id, item.quantity + 1, item.selectedColor)}
                             disabled={item.quantity >= (item.product.stock || 0)}
                             className="p-2 hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                            aria-label={`Augmenter la quantité de ${item.product.name}`}
                           >
                             <PlusIcon className="w-4 h-4" />
                           </button>
@@ -203,16 +224,22 @@ export default function CartPage() {
                   <span>Réduction</span>
                   <span className="font-semibold">0 FCFA</span>
                 </div>
-                <div className="flex gap-2 pt-2">
+                <form className="flex gap-2 pt-2" onSubmit={handlePromoSubmit}>
                   <input
                     type="text"
+                    value={promoCode}
+                    onChange={(event) => {
+                      setPromoCode(event.target.value.toUpperCase());
+                      setPromoMessage('');
+                    }}
                     placeholder="Code promo"
                     className="flex-1 rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-orange-200"
                   />
-                  <button type="button" className="px-4 py-2 bg-brand-orange text-white text-sm font-bold rounded-lg hover:bg-brand-orange-dark">
+                  <button type="submit" className="px-4 py-2 bg-brand-orange text-white text-sm font-bold rounded-lg hover:bg-brand-orange-dark">
                     Appliquer
                   </button>
-                </div>
+                </form>
+                {promoMessage && <p role="status" className="text-xs text-gray-600">{promoMessage}</p>}
                 <div className="border-t border-gray-200 pt-4">
                   <div className="flex justify-between text-lg font-extrabold text-brand-navy">
                     <span>Total</span>
@@ -250,4 +277,3 @@ export default function CartPage() {
     </div>
   );
 }
-

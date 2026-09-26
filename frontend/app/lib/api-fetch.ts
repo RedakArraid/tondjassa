@@ -35,7 +35,7 @@ export async function apiFetch(input: RequestInfo | URL, init: RequestInit = {})
   const url = new URL(String(input), window.location.origin);
   if ((url.origin !== new URL(API).origin && url.origin !== window.location.origin) || !url.pathname.startsWith('/api/')) return globalThis.fetch(input, init);
   const headers = new Headers(init.headers);
-  const staffPath = /^\/api\/(admin|dashboard|sellers)\b/.test(url.pathname);
+  const staffPath = /^\/api\/(admin|dashboard|sellers|support)\b/.test(url.pathname);
   const staffToken = sessionStorage.getItem(keys.staff);
   const supplied = headers.get('Authorization')?.replace(/^Bearer /, '');
   // This hint selects a refresh cookie only; the server still validates every JWT.
@@ -43,7 +43,7 @@ export async function apiFetch(input: RequestInfo | URL, init: RequestInit = {})
   let suppliedStaff = false;
   try {
     const payload = supplied?.split('.')[1];
-    if (payload) suppliedStaff = ['admin', 'manager', 'seller'].includes(JSON.parse(atob(payload.replace(/-/g, '+').replace(/_/g, '/'))).role);
+    if (payload) suppliedStaff = ['admin', 'manager', 'support', 'seller'].includes(JSON.parse(atob(payload.replace(/-/g, '+').replace(/_/g, '/'))).role);
   } catch { /* invalid tokens are rejected by the server */ }
   const portal: Portal = (supplied && supplied === staffToken) || suppliedStaff || staffPath ? 'staff' : 'customer';
   const token = supplied || sessionStorage.getItem(keys[portal]);

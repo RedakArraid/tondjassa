@@ -20,16 +20,19 @@ export default function VendeurOverviewPage() {
   const [earnings, setEarnings] = useState<any>(null);
   const [products, setProducts] = useState<any[]>([]);
   const [orders, setOrders] = useState<any[]>([]);
+  const [customers, setCustomers] = useState<any[]>([]);
 
   useEffect(() => {
     Promise.allSettled([
       SellerService.getMyEarnings(),
       SellerService.getMyProducts(1),
       SellerService.getMyOrders(1),
+      SellerService.getMyCustomers(),
     ]).then((results) => {
       if (results[0].status === 'fulfilled') setEarnings(results[0].value);
       if (results[1].status === 'fulfilled') setProducts(results[1].value?.products || []);
       if (results[2].status === 'fulfilled') setOrders(results[2].value?.orders || []);
+      if (results[3].status === 'fulfilled') setCustomers(Array.isArray(results[3].value) ? results[3].value : []);
       setLoading(false);
     });
   }, []);
@@ -43,7 +46,7 @@ export default function VendeurOverviewPage() {
   }
 
   const lowStock = products.filter((p) => (p.stock ?? 0) <= 5);
-  const topProducts = [...products].slice(0, 5);
+  const catalogProducts = [...products].slice(0, 5);
   const recentOrders = orders.slice(0, 5);
   const available = earnings?.availableBalance ?? earnings?.totalEarnings ?? 0;
 
@@ -96,15 +99,15 @@ export default function VendeurOverviewPage() {
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <SellerCard
-          title="Abonnés"
+          title="Clients acheteurs"
           action={
             <SellerActionButton href="/vendeur/dashboard/statistiques/abonnes" size="sm" variant="ghost">
-              Voir mes abonnés
+              Voir mes clients
             </SellerActionButton>
           }
         >
-          <p className="text-3xl font-bold text-brand-navy">0</p>
-          <p className="text-xs text-gray-500 mt-1">nouveaux cette semaine</p>
+          <p className="text-3xl font-bold text-brand-navy">{customers.length}</p>
+          <p className="text-xs text-gray-500 mt-1">ayant commandé dans votre boutique</p>
         </SellerCard>
 
         <SellerCard title="Alertes" className="lg:col-span-2">
@@ -117,7 +120,7 @@ export default function VendeurOverviewPage() {
                 </div>
                 <RowActions>
                   <SellerActionButton href="/vendeur/dashboard/produits" size="sm" variant="secondary">Voir le produit</SellerActionButton>
-                  <SellerActionButton href="/vendeur/dashboard/produits/stock" size="sm" variant="primary">Mettre à jour le stock</SellerActionButton>
+                  <SellerActionButton permission="catalog.write" href="/vendeur/dashboard/produits/stock" size="sm" variant="primary">Mettre à jour le stock</SellerActionButton>
                 </RowActions>
               </div>
             ))}
@@ -127,14 +130,6 @@ export default function VendeurOverviewPage() {
                 <SellerActionButton href="/vendeur/dashboard/commandes" size="sm" variant="secondary">Voir la commande</SellerActionButton>
               </div>
             )}
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border border-gray-100 rounded-lg px-3 py-2">
-              <p className="text-sm font-semibold text-brand-navy">Nouveau message</p>
-              <SellerActionButton href="/vendeur/dashboard/communication/messages" size="sm" variant="primary">Répondre</SellerActionButton>
-            </div>
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border border-green-100 bg-green-50/40 rounded-lg px-3 py-2">
-              <p className="text-sm font-semibold text-green-800">Paiement disponible</p>
-              <SellerActionButton href="/vendeur/dashboard/paiements" size="sm" variant="secondary">Voir le solde</SellerActionButton>
-            </div>
             {lowStock.length === 0 && !orders[0] && (
               <p className="text-sm text-gray-500">Aucune alerte critique pour le moment.</p>
             )}
@@ -164,9 +159,9 @@ export default function VendeurOverviewPage() {
                 </div>
                 <RowActions>
                   <SellerActionButton href="/vendeur/dashboard/commandes" size="sm" variant="secondary">Voir</SellerActionButton>
-                  <SellerActionButton href="/vendeur/dashboard/commandes/a-preparer" size="sm" variant="primary">Préparer</SellerActionButton>
+                  <SellerActionButton permission="orders.write" href="/vendeur/dashboard/commandes/a-preparer" size="sm" variant="primary">Préparer</SellerActionButton>
                   <SellerActionButton href="/vendeur/dashboard/commandes" size="sm" variant="outline">Gérer commande</SellerActionButton>
-                  <SellerActionButton href="/vendeur/dashboard/communication/messages" size="sm" variant="ghost">Contacter le client</SellerActionButton>
+                  <SellerActionButton permission="orders.write" href="/vendeur/dashboard/communication/messages" size="sm" variant="ghost">Contacter le client</SellerActionButton>
                 </RowActions>
               </div>
             ))}
@@ -174,12 +169,12 @@ export default function VendeurOverviewPage() {
         )}
       </SellerCard>
 
-      <SellerCard title="Produits les plus vendus">
-        {topProducts.length === 0 ? (
-          <SellerEmptyState title="Pas encore de ventes" description="Ajoutez des produits pour commencer." actionLabel="+ Ajouter un produit" actionHref="/vendeur/dashboard/produits/ajouter" />
+      <SellerCard title="Aperçu du catalogue">
+        {catalogProducts.length === 0 ? (
+          <SellerEmptyState title="Aucun produit" description="Ajoutez des produits pour commencer." actionLabel="+ Ajouter un produit" actionHref="/vendeur/dashboard/produits/ajouter" />
         ) : (
           <div className="space-y-3">
-            {topProducts.map((p) => (
+            {catalogProducts.map((p) => (
               <div key={p.id} className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 border border-gray-100 rounded-xl px-4 py-3">
                 <div className="flex items-center gap-3 min-w-0">
                   {p.image ? <img src={p.image} alt="" className="w-10 h-10 rounded object-cover" /> : <div className="w-10 h-10 rounded bg-gray-100" />}

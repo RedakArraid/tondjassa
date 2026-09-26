@@ -36,7 +36,8 @@ async function main() {
         email: process.env.SEED_ADMIN_EMAIL || 'admin@mandemarket.com',
         password: adminPassword,
         name: 'Administrateur MandeMarket',
-        role: 'admin'
+        role: 'admin',
+        emailVerifiedAt: new Date(),
       }
     });
     console.log('✅ Admin créé:', admin.email, '(mot de passe seed)');

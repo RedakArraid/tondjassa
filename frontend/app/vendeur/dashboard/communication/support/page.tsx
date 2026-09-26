@@ -4,6 +4,7 @@ import React, { useEffect, useState } from 'react';
 import { SellerService } from '../../../../config/api';
 import { Spinner } from '../../_components/sections';
 import { SellerPageHeader, SellerCard, SellerEmptyState } from '../../_components/ui';
+import { useSellerAccess } from '../../_components/access';
 
 const CATEGORIES = [
   'Commande & Expédition',
@@ -14,7 +15,17 @@ const CATEGORIES = [
   'Autre demande',
 ];
 
+const STATUS_LABELS: Record<string, string> = {
+  OPEN: 'Ouvert',
+  IN_PROGRESS: 'En cours',
+  WAITING_CUSTOMER: 'En attente de votre réponse',
+  RESOLVED: 'Résolu',
+  CLOSED: 'Fermé',
+};
+
 export default function SupportPage() {
+  const { can } = useSellerAccess();
+  const canWrite = can('orders.write');
   const [tickets, setTickets] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [showCreate, setShowCreate] = useState(false);
@@ -67,7 +78,7 @@ export default function SupportPage() {
       <SellerPageHeader
         title="Support MandeMarket"
         description="Assistance dédiée aux vendeurs. Notre équipe opérationnelle et technique répond à toutes vos questions."
-        action={
+        action={canWrite ? (
           <button
             type="button"
             onClick={() => setShowCreate(true)}
@@ -75,7 +86,7 @@ export default function SupportPage() {
           >
             + Nouvelle demande
           </button>
-        }
+        ) : undefined}
       />
 
       {feedback && (
@@ -88,7 +99,7 @@ export default function SupportPage() {
       )}
 
       {/* Formulaire de création de ticket */}
-      {showCreate && (
+      {canWrite && showCreate && (
         <SellerCard title="Ouvrir un ticket d'assistance">
           <form onSubmit={handleCreateTicket} className="space-y-4 max-w-2xl">
             <div>
@@ -165,11 +176,11 @@ export default function SupportPage() {
               <div key={t.id} className="py-4 first:pt-0 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <div className="space-y-1">
                   <div className="flex items-center gap-2">
-                    <span className="font-bold text-brand-navy">#{t.id}</span>
+                    <span className="font-bold text-brand-navy">{t.reference || `#${String(t.id).slice(0, 8)}`}</span>
                     <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${
                       t.status === 'RESOLVED' ? 'bg-emerald-100 text-emerald-800' : 'bg-blue-100 text-blue-800'
                     }`}>
-                      {t.status === 'RESOLVED' ? 'Résolu' : 'En cours'}
+                      {STATUS_LABELS[t.status] || t.status}
                     </span>
                     <span className="text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded">
                       {t.category}
@@ -203,7 +214,7 @@ export default function SupportPage() {
             <div className="flex items-center justify-between border-b pb-3">
               <div>
                 <h3 className="text-base font-bold text-brand-navy">
-                  Ticket #{selectedTicket.id} — {selectedTicket.category}
+                  Ticket {selectedTicket.reference || `#${String(selectedTicket.id).slice(0, 8)}`} — {selectedTicket.category}
                 </h3>
                 <p className="text-xs text-gray-400">
                   {new Date(selectedTicket.createdAt).toLocaleDateString('fr-FR', { dateStyle: 'long', timeStyle: 'short' })}
@@ -233,14 +244,14 @@ export default function SupportPage() {
 
               {/* Réponses de l'équipe support */}
               {(selectedTicket.responses || []).map((resp: any, idx: number) => (
-                <div key={idx} className="bg-gray-50 border border-gray-200 p-3.5 rounded-xl space-y-1">
+                <div key={resp.id || idx} className="bg-gray-50 border border-gray-200 p-3.5 rounded-xl space-y-1">
                   <div className="flex items-center justify-between text-xs font-semibold text-blue-700">
-                    <span>Support MandeMarket</span>
+                    <span>{resp.author?.name || resp.author?.email || 'Support MandeMarket'}</span>
                     <span className="text-gray-400 font-normal">
-                      {resp.date ? new Date(resp.date).toLocaleDateString('fr-FR') : ''}
+                      {resp.createdAt ? new Date(resp.createdAt).toLocaleDateString('fr-FR', { dateStyle: 'medium', timeStyle: 'short' }) : ''}
                     </span>
                   </div>
-                  <p className="text-sm text-gray-800 whitespace-pre-line">{resp.text}</p>
+                  <p className="text-sm text-gray-800 whitespace-pre-line">{resp.message}</p>
                 </div>
               ))}
             </div>

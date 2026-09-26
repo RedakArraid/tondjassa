@@ -1,9 +1,11 @@
 const express = require('express');
 const { z } = require('zod');
 const router = express.Router();
-const { requireAuth, requireAdmin, requireSeller } = require('./middleware.auth');
+const { requireAuth, requireAdmin, requireRole, requireSeller } = require('./middleware.auth');
 const db = require('./db');
 const ReviewService = require('./services/review.service');
+const crypto = require('node:crypto');
+const { permissionsForRole } = require('./services/seller-access.service');
 
 // Slugify helper
 function slugify(text) {
@@ -30,6 +32,11 @@ const updateSellerSchema = z.object({
   storeName: z.string().min(2).max(100).optional(),
   description: z.string().max(500).optional(),
   logo: z.string().url().optional(),
+  phone: z.string().trim().max(40).optional(),
+  email: z.string().trim().email().or(z.literal('')).optional(),
+  address: z.string().trim().max(300).optional(),
+  hours: z.string().trim().max(300).optional(),
+  social: z.string().trim().max(500).optional(),
   paymentInfo: z.object({
     method: z.enum(['mobile_money', 'bank_transfer', 'orange_money', 'mtn_money']),
     accountNumber: z.string(),
@@ -37,6 +44,13 @@ const updateSellerSchema = z.object({
     operator: z.string().optional()
   }).optional()
 });
+
+const sellerSettingsSchema = z.object({
+  storeName: z.string().trim().min(2).max(100).optional(),
+  description: z.string().max(500).optional(),
+  logo: z.string().url().or(z.literal('')).optional(),
+  paymentInfo: z.record(z.unknown()).optional(),
+}).strict();
 
 const approveSellerSchema = z.object({
   status: z.enum(['approved', 'suspended']),
@@ -97,7 +111,16 @@ router.get('/slug/:slug', async (req, res) => {
   try {
     const seller = await db.seller.findFirst({
       where: { slug: req.params.slug, status: 'approved' },
-      include: {
+      select: {
+        id: true,
+        storeName: true,
+        slug: true,
+        description: true,
+        logo: true,
+        rating: true,
+        reviewCount: true,
+        totalSales: true,
+        createdAt: true,
         products: {
           where: { status: 'active' },
           take: 48,
@@ -233,7 +256,17 @@ router.get('/me/profile', requireAuth, requireSeller, async (req, res) => {
         user: { select: { email: true, name: true } }
       }
     });
-    res.json(seller);
+    const settings = seller.paymentInfo && typeof seller.paymentInfo === 'object' && !Array.isArray(seller.paymentInfo)
+      ? seller.paymentInfo : {};
+    res.json({
+      ...seller,
+      phone: settings.phone || '',
+      email: settings.email || '',
+      address: settings.address || '',
+      hours: settings.hours || '',
+      social: settings.social || '',
+      access: req.sellerAccess,
+    });
   } catch (error) {
     console.error('Erreur GET /sellers/me/profile:', error);
     res.status(500).json({ error: 'Erreur serveur' });
@@ -255,9 +288,19 @@ router.put('/me/profile', requireAuth, requireSeller, async (req, res) => {
       }
     }
 
+    const { phone, email, address, hours, social, paymentInfo, ...sellerFields } = data;
+    const presentation = Object.fromEntries(
+      Object.entries({ phone, email, address, hours, social }).filter(([, value]) => value !== undefined)
+    );
+    const currentPaymentInfo = req.seller.paymentInfo && typeof req.seller.paymentInfo === 'object' && !Array.isArray(req.seller.paymentInfo)
+      ? req.seller.paymentInfo : {};
+    const shouldUpdatePaymentInfo = paymentInfo !== undefined || Object.keys(presentation).length > 0;
     const seller = await db.seller.update({
       where: { id: req.seller.id },
-      data
+      data: {
+        ...sellerFields,
+        ...(shouldUpdatePaymentInfo && { paymentInfo: { ...currentPaymentInfo, ...(paymentInfo || {}), ...presentation } }),
+      }
     });
     res.json(seller);
   } catch (error) {
@@ -421,6 +464,9 @@ router.post('/me/products/bulk', requireAuth, requireSeller, async (req, res) =>
 router.post('/me/products/:id/duplicate', requireAuth, requireSeller, async (req, res) => {
   try {
     const id = parseInt(req.params.id, 10);
+    if (!Number.isSafeInteger(id) || id <= 0) {
+      return res.status(400).json({ error: 'Identifiant produit invalide' });
+    }
     const orig = await db.product.findUnique({
       where: { id },
       include: { inventory: true },
@@ -479,6 +525,9 @@ router.post('/me/products/:id/duplicate', requireAuth, requireSeller, async (req
 router.put('/me/products/:id/status', requireAuth, requireSeller, async (req, res) => {
   try {
     const id = parseInt(req.params.id, 10);
+    if (!Number.isSafeInteger(id) || id <= 0) {
+      return res.status(400).json({ error: 'Identifiant produit invalide' });
+    }
     const { status } = req.body;
     if (!['active', 'draft', 'archived'].includes(status)) {
       return res.status(400).json({ error: 'Statut invalide (active, draft, archived)' });
@@ -505,6 +554,9 @@ router.put('/me/products/:id/status', requireAuth, requireSeller, async (req, re
 router.put('/me/products/:id/stock', requireAuth, requireSeller, async (req, res) => {
   try {
     const id = parseInt(req.params.id, 10);
+    if (!Number.isSafeInteger(id) || id <= 0) {
+      return res.status(400).json({ error: 'Identifiant produit invalide' });
+    }
     const { quantity, lowStockThreshold = 5 } = req.body;
     const qty = parseInt(quantity, 10);
 
@@ -531,6 +583,9 @@ router.put('/me/products/:id/stock', requireAuth, requireSeller, async (req, res
 router.get('/me/products/:id/stats', requireAuth, requireSeller, async (req, res) => {
   try {
     const id = parseInt(req.params.id, 10);
+    if (!Number.isSafeInteger(id) || id <= 0) {
+      return res.status(400).json({ error: 'Identifiant produit invalide' });
+    }
     const prod = await db.product.findUnique({
       where: { id },
       include: {
@@ -572,12 +627,17 @@ router.get('/me/products/:id/stats', requireAuth, requireSeller, async (req, res
 
 // ==================== COMMANDES VENDEUR (MM-BE-061) ====================
 
+const sellerOrderListSchema = z.object({
+  page: z.coerce.number().int().min(1).max(100000).default(1),
+  limit: z.coerce.number().int().min(1).max(100).default(20),
+  status: z.enum(['PENDING', 'CONFIRMED', 'PROCESSING', 'SHIPPED', 'DELIVERED', 'CANCELLED', 'REFUNDED']).optional(),
+  search: z.string().trim().max(100).optional(),
+}).strict();
+
 // GET mes commandes (filtrées et paginées)
 router.get('/me/orders', requireAuth, requireSeller, async (req, res) => {
   try {
-    const { page = 1, limit = 20, status, search } = req.query;
-    const pageNum = Math.max(1, parseInt(page, 10) || 1);
-    const limitNum = Math.min(100, Math.max(1, parseInt(limit, 10) || 20));
+    const { page: pageNum, limit: limitNum, status, search } = sellerOrderListSchema.parse(req.query);
     const skip = (pageNum - 1) * limitNum;
 
     const where = {
@@ -630,6 +690,7 @@ router.get('/me/orders', requireAuth, requireSeller, async (req, res) => {
       },
     });
   } catch (error) {
+    if (error.name === 'ZodError') return res.status(400).json({ error: 'Filtres invalides', details: error.errors });
     console.error('Erreur GET /sellers/me/orders:', error);
     res.status(500).json({ error: 'Erreur serveur' });
   }
@@ -678,6 +739,8 @@ router.put('/me/orders/:id/status', requireAuth, requireSeller, async (req, res)
     const order = await OrderService.transitionSellerFulfillment(req.params.id, req.seller.id, status, {
       userId: req.user.userId, reason: note, carrier: carrierName, trackingCode: trackingNumber,
     });
+    const notificationOrder = await db.order.findUnique({ where: { id: req.params.id }, include: { customer: true, shipping: true } });
+    if (notificationOrder?.customer) await require('./services/email.service').sendOrderStatusUpdate(notificationOrder.customer, notificationOrder, order.status);
     res.json({ success: true, order });
   } catch (error) { res.status(error.statusCode || 400).json({ error: error.message }); }
 });
@@ -780,67 +843,63 @@ router.post('/me/reviews/:id/reply', requireAuth, requireSeller, async (req, res
 // GET /api/sellers/me/notifications - Notifications vendeur
 router.get('/me/notifications', requireAuth, requireSeller, async (req, res) => {
   try {
-    const notifs = await db.notification.findMany({
-      where: { userId: req.user.userId },
-      orderBy: { createdAt: 'desc' },
-      take: 50,
-    });
-    res.json(notifs);
+    const [notifications, unreadCount] = await Promise.all([
+      db.notification.findMany({
+        where: { userId: req.user.userId },
+        orderBy: { createdAt: 'desc' },
+        take: 50,
+      }),
+      db.notification.count({ where: { userId: req.user.userId, isRead: false } }),
+    ]);
+    res.json({ notifications, unreadCount });
   } catch (error) {
     console.error('Erreur notifs vendeur:', error);
     res.status(500).json({ error: 'Erreur serveur' });
   }
 });
 
-// PUT /api/sellers/me/notifications/:id/read - Marquer notification comme lue
-router.put('/me/notifications/:id/read', requireAuth, requireSeller, async (req, res) => {
+// PATCH /api/sellers/me/notifications/:id/read - Marquer une notification du vendeur comme lue.
+async function markSellerNotificationRead(req, res) {
   try {
-    await db.notification.updateMany({
+    const updated = await db.notification.updateMany({
       where: { id: req.params.id, userId: req.user.userId },
       data: { isRead: true },
     });
+    if (updated.count === 0) return res.status(404).json({ error: 'Notification introuvable' });
     res.json({ success: true });
-  } catch (error) {
+  } catch {
     res.status(500).json({ error: 'Erreur serveur' });
   }
-});
+}
+router.patch('/me/notifications/:id/read', requireAuth, requireSeller, markSellerNotificationRead);
+router.put('/me/notifications/:id/read', requireAuth, requireSeller, markSellerNotificationRead);
 
-// POST /api/sellers/me/notifications/read-all - Marquer toutes comme lues
-router.post('/me/notifications/read-all', requireAuth, requireSeller, async (req, res) => {
+// PATCH /api/sellers/me/notifications/read-all - Marquer toutes comme lues.
+async function markAllSellerNotificationsRead(req, res) {
   try {
-    await db.notification.updateMany({
+    const updated = await db.notification.updateMany({
       where: { userId: req.user.userId, isRead: false },
       data: { isRead: true },
     });
-    res.json({ success: true });
-  } catch (error) {
+    res.json({ success: true, updated: updated.count });
+  } catch {
     res.status(500).json({ error: 'Erreur serveur' });
   }
-});
+}
+router.patch('/me/notifications/read-all', requireAuth, requireSeller, markAllSellerNotificationsRead);
+router.post('/me/notifications/read-all', requireAuth, requireSeller, markAllSellerNotificationsRead);
 
 // GET /api/sellers/me/support/tickets - Liste des tickets support vendeur
 router.get('/me/support/tickets', requireAuth, requireSeller, async (req, res) => {
   try {
-    const logs = await db.auditLog.findMany({
-      where: {
-        userId: req.user.userId,
-        entity: 'SupportTicket',
-      },
+    const supportTickets = require('./services/support-ticket.service');
+    const tickets = await db.supportTicket.findMany({
+      where: { sellerId: req.seller.id },
+      include: supportTickets.ticketDetailInclude,
       orderBy: { createdAt: 'desc' },
       take: 50,
     });
-
-    const tickets = logs.map(l => ({
-      id: l.entityId || l.id,
-      category: l.details?.category || 'Général',
-      subject: l.details?.subject || 'Demande d’assistance',
-      message: l.details?.message || '',
-      status: l.details?.status || 'OPEN',
-      responses: l.details?.responses || [],
-      createdAt: l.createdAt,
-    }));
-
-    res.json(tickets);
+    res.json(tickets.map(supportTickets.formatSellerTicket));
   } catch (error) {
     console.error('Erreur support tickets:', error);
     res.status(500).json({ error: 'Erreur serveur' });
@@ -856,58 +915,36 @@ router.post('/me/support/tickets', requireAuth, requireSeller, async (req, res) 
       message: z.string().trim().min(10).max(5000),
     }).parse(req.body);
 
-    const ticketId = `T-${Date.now().toString(36).toUpperCase().slice(-6)}`;
-    const details = {
-      category: input.category || 'Autre',
-      subject: input.subject,
-      message: input.message,
-      status: 'PENDING_DELIVERY',
-      storeName: req.seller.storeName,
-      storeSlug: req.seller.slug,
-      responses: [],
-    };
-    const log = await db.auditLog.create({
-      data: {
-        userId: req.user.userId,
-        action: 'SUPPORT_TICKET_CREATED',
-        entity: 'SupportTicket',
-        entityId: ticketId,
-        details,
-        ipAddress: req.ip,
-        userAgent: req.headers['user-agent'] || null,
-      },
-    });
-
     const sellerUser = await db.user.findUnique({
       where: { id: req.user.userId },
       select: { email: true, name: true },
+    });
+    const supportTickets = require('./services/support-ticket.service');
+    const ticket = await supportTickets.createTicket({
+      source: 'SELLER',
+      category: input.category || 'Autre',
+      subject: input.subject,
+      message: input.message,
+      requesterName: sellerUser?.name || req.seller.storeName,
+      requesterEmail: sellerUser?.email || 'vendeur@mandemarket.invalid',
+      sellerId: req.seller.id,
+      createdById: req.user.userId,
+      ipAddress: req.ip,
+      userAgent: req.headers['user-agent'] || null,
     });
     const emailService = require('./services/email.service');
     const delivered = await emailService.sendContactMessageNotification({
       name: `${sellerUser?.name || req.seller.storeName} — ${req.seller.storeName}`,
       email: sellerUser?.email || 'vendeur@mandemarket.invalid',
-      subject: `[Ticket ${ticketId}] ${input.subject}`,
+      subject: `[Ticket ${ticket.reference}] ${input.subject}`,
       message: input.message,
-    });
-
-    const status = delivered.success ? 'OPEN' : 'DELIVERY_FAILED';
-    await db.auditLog.update({
-      where: { id: log.id },
-      data: { details: { ...details, status, messageId: delivered.messageId || null } },
     });
     if (!delivered.success) {
-      return res.status(503).json({ error: 'Support temporairement indisponible. Le ticket n’a pas été annoncé à l’équipe.' });
+      console.warn(`[Support] Ticket ${ticket.reference} persisté; notification email non disponible:`, delivered.error || 'erreur inconnue');
     }
-
-    res.status(201).json({
-      id: ticketId,
-      category: details.category,
-      subject: input.subject,
-      message: input.message,
-      status,
-      createdAt: log.createdAt,
-    });
+    res.status(201).json({ ...supportTickets.formatSellerTicket(ticket), notificationQueued: delivered.success });
   } catch (error) {
+    if (error.name === 'ZodError') return res.status(400).json({ error: 'Ticket invalide', details: error.errors });
     console.error('Erreur création support ticket:', error);
     res.status(500).json({ error: 'Erreur serveur' });
   }
@@ -1086,38 +1123,143 @@ router.get('/me/settings', requireAuth, requireSeller, async (req, res) => {
 // PUT /api/sellers/me/settings
 router.put('/me/settings', requireAuth, requireSeller, async (req, res) => {
   try {
-    const { storeName, description, logo, paymentInfo } = req.body;
+    const { storeName, description, logo, paymentInfo } = sellerSettingsSchema.parse(req.body);
+    const currentPaymentInfo = req.seller.paymentInfo && typeof req.seller.paymentInfo === 'object' && !Array.isArray(req.seller.paymentInfo)
+      ? req.seller.paymentInfo : {};
     const updated = await db.seller.update({
       where: { id: req.seller.id },
       data: {
         ...(storeName && { storeName: storeName.trim() }),
         ...(description !== undefined && { description }),
         ...(logo !== undefined && { logo }),
-        ...(paymentInfo && { paymentInfo }),
+        ...(paymentInfo && { paymentInfo: { ...currentPaymentInfo, ...paymentInfo } }),
       },
     });
     res.json({ success: true, seller: updated });
   } catch (error) {
+    if (error.name === 'ZodError') return res.status(400).json({ error: 'Paramètres invalides', details: error.errors });
     res.status(500).json({ error: 'Erreur mise à jour paramètres' });
   }
 });
 
 // GET /api/sellers/me/team - Liste des membres de la boutique
 router.get('/me/team', requireAuth, requireSeller, async (req, res) => {
-  // Propriétaire principal
-  const owner = {
-    id: req.user.userId,
-    name: req.seller.storeName,
-    email: req.user.email,
-    role: 'Propriétaire',
-    joinedAt: req.seller.createdAt,
-  };
-  res.json([owner]);
+  try {
+    const [seller, members, invitations] = await Promise.all([
+      db.seller.findUnique({ where: { id: req.seller.id }, include: { user: { select: { id: true, name: true, email: true } } } }),
+      db.sellerMember.findMany({ where: { sellerId: req.seller.id }, include: { user: { select: { name: true, email: true } } }, orderBy: { joinedAt: 'asc' } }),
+      db.sellerInvitation.findMany({ where: { sellerId: req.seller.id, status: 'pending' }, orderBy: { createdAt: 'desc' } }),
+    ]);
+    await db.sellerInvitation.updateMany({ where: { sellerId: req.seller.id, status: 'pending', expiresAt: { lte: new Date() } }, data: { status: 'expired' } });
+    res.json({
+      members: [{ id: seller.user.id, name: seller.user.name || seller.storeName, email: seller.user.email,
+        role: 'owner', status: 'active', permissions: ['*'], joinedAt: seller.createdAt },
+      ...members.map((member) => ({ id: member.id, name: member.user.name, email: member.user.email,
+        role: member.role, status: member.status, permissions: member.permissions, joinedAt: member.joinedAt }))],
+      invitations: invitations.filter((invitation) => invitation.expiresAt > new Date()).map((invitation) => ({
+        id: invitation.id, email: invitation.email, role: invitation.role, status: invitation.status,
+        permissions: invitation.permissions, createdAt: invitation.createdAt, expiresAt: invitation.expiresAt,
+      })),
+    });
+  } catch (error) {
+    console.error('Erreur GET equipe vendeur:', error);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
 });
 
-// Team membership needs a real membership/permission model; never fake an invitation.
-router.post('/me/team/invite', requireAuth, requireSeller, async (req, res) => {
-  res.status(501).json({ error: 'Les comptes collaborateurs ne sont pas encore activés. Aucun email d’invitation n’a été envoyé.' });
+const inviteSchema = z.object({ email: z.string().trim().toLowerCase().email(), role: z.enum(['manager', 'catalog', 'orders', 'finance']) }).strict();
+async function inviteTeamMember(req, res) {
+  try {
+    const input = inviteSchema.parse(req.body);
+    const owner = await db.user.findUnique({ where: { id: req.seller.userId }, select: { email: true } });
+    if ([owner?.email, req.user.email].filter(Boolean).map((email) => email.toLowerCase()).includes(input.email)) {
+      return res.status(409).json({ error: 'Vous ne pouvez pas vous inviter vous-même.' });
+    }
+    const existingUser = await db.user.findUnique({ where: { email: input.email }, select: { id: true } });
+    if (existingUser && await db.sellerMember.findUnique({ where: { sellerId_userId: { sellerId: req.seller.id, userId: existingUser.id } } })) {
+      return res.status(409).json({ error: 'Cette personne appartient déjà à la boutique.' });
+    }
+    const duplicate = await db.sellerInvitation.findFirst({ where: { sellerId: req.seller.id, email: input.email,
+      status: 'pending', expiresAt: { gt: new Date() } } });
+    if (duplicate) return res.status(409).json({ error: 'Une invitation active existe déjà pour cette adresse.' });
+    const rawToken = crypto.randomBytes(32).toString('hex');
+    const tokenHash = crypto.createHash('sha256').update(rawToken).digest('hex');
+    const invitation = await db.$transaction(async (tx) => {
+      const created = await tx.sellerInvitation.create({ data: { sellerId: req.seller.id, email: input.email,
+        role: input.role, permissions: permissionsForRole(input.role), tokenHash, invitedById: req.user.userId,
+        expiresAt: new Date(Date.now() + 7 * 86400000) } });
+      await tx.auditLog.create({ data: { userId: req.user.userId, action: 'SELLER_TEAM_INVITED', entity: 'SellerInvitation',
+        entityId: created.id, details: { sellerId: req.seller.id, email: input.email, role: input.role }, ipAddress: req.ip } });
+      return created;
+    });
+    const inviteUrl = `${process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3000'}/vendeur/invitation#token=${rawToken}`;
+    await require('./services/email.service').sendSellerInvitation({ to: input.email, storeName: req.seller.storeName,
+      role: input.role, inviteUrl, invitationId: invitation.id });
+    res.status(201).json({ invitation: { id: invitation.id, email: invitation.email, role: invitation.role,
+      status: invitation.status, createdAt: invitation.createdAt } });
+  } catch (error) {
+    if (error.name === 'ZodError') return res.status(400).json({ error: 'Invitation invalide', details: error.errors });
+    console.error('Erreur invitation équipe:', error);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+}
+router.post('/me/team/invite', requireAuth, requireSeller, inviteTeamMember);
+router.post('/me/team/invitations', requireAuth, requireSeller, inviteTeamMember);
+
+router.post('/invitations/:token/accept', requireAuth, async (req, res) => {
+  try {
+    const token = z.string().regex(/^[a-f0-9]{64}$/).parse(req.params.token);
+    const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+    const invitation = await db.$transaction(async (tx) => {
+      const current = await tx.sellerInvitation.findUnique({ where: { tokenHash } });
+      if (!current || current.status !== 'pending' || current.expiresAt <= new Date()) throw Object.assign(new Error('Invitation invalide ou expirée'), { statusCode: 400 });
+      if (current.email !== req.user.email.toLowerCase()) throw Object.assign(new Error('Cette invitation appartient à une autre adresse.'), { statusCode: 403 });
+      await tx.sellerMember.upsert({ where: { sellerId_userId: { sellerId: current.sellerId, userId: req.user.userId } },
+        create: { sellerId: current.sellerId, userId: req.user.userId, role: current.role, permissions: current.permissions },
+        update: { role: current.role, permissions: current.permissions, status: 'active', joinedAt: new Date() } });
+      const accepted = await tx.sellerInvitation.update({ where: { id: current.id }, data: {
+        status: 'accepted', acceptedById: req.user.userId, acceptedAt: new Date(),
+      } });
+      await tx.auditLog.create({ data: { userId: req.user.userId, action: 'SELLER_TEAM_INVITATION_ACCEPTED',
+        entity: 'SellerInvitation', entityId: current.id, details: { sellerId: current.sellerId, role: current.role }, ipAddress: req.ip } });
+      return accepted;
+    });
+    const user = await db.user.findUnique({ where: { id: req.user.userId }, include: { customer: true, seller: true } });
+    const staffSession = await require('./services/session.service').issueSession(user, req, res, 'staff');
+    res.json({ success: true, sellerId: invitation.sellerId, role: invitation.role,
+      permissions: invitation.permissions, accessToken: staffSession.accessToken,
+      user: { id: user.id, email: user.email, name: user.name, role: user.role } });
+  } catch (error) {
+    res.status(error.statusCode || (error.name === 'ZodError' ? 400 : 500)).json({ error: error.statusCode || error.name === 'ZodError' ? error.message : 'Erreur serveur' });
+  }
+});
+
+const notificationPreferenceSchema = z.object({
+  newOrder: z.boolean(), newMessage: z.boolean(), newReview: z.boolean(), newFollower: z.boolean(),
+  lowStock: z.boolean(), payments: z.boolean(), marketing: z.boolean(), platformMessages: z.boolean(),
+}).strict();
+
+router.get('/me/notification-preferences', requireAuth, requireSeller, async (req, res) => {
+  const preferences = await db.sellerNotificationPreference.upsert({ where: { sellerId: req.seller.id },
+    create: { sellerId: req.seller.id }, update: {} });
+  res.json({ preferences: Object.fromEntries(Object.keys(notificationPreferenceSchema.shape).map((key) => [key, preferences[key]])) });
+});
+
+router.put('/me/notification-preferences', requireAuth, requireSeller, async (req, res) => {
+  try {
+    const patch = notificationPreferenceSchema.partial().refine((value) => Object.keys(value).length > 0, 'Au moins une préférence est requise').parse(req.body);
+    const preferences = await db.$transaction(async (tx) => {
+      const updated = await tx.sellerNotificationPreference.upsert({ where: { sellerId: req.seller.id },
+        create: { sellerId: req.seller.id, ...patch }, update: patch });
+      await tx.auditLog.create({ data: { userId: req.user.userId, action: 'SELLER_NOTIFICATION_PREFERENCES_UPDATED',
+        entity: 'Seller', entityId: req.seller.id, details: { changed: Object.keys(patch) }, ipAddress: req.ip } });
+      return updated;
+    });
+    res.json({ preferences: Object.fromEntries(Object.keys(notificationPreferenceSchema.shape).map((key) => [key, preferences[key]])) });
+  } catch (error) {
+    if (error.name === 'ZodError') return res.status(400).json({ error: 'Préférences invalides', details: error.errors });
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
 });
 
 // GET /api/sellers/me/balance - 4 soldes réels du vendeur (MM-BE-052 / MM-FE-050)
@@ -1125,7 +1267,7 @@ router.get('/me/balance', requireAuth, requireSeller, async (req, res) => {
   try {
     const LedgerService = require('./services/ledger.service');
     const balances = await LedgerService.getSellerBalances(req.seller.id);
-    res.json(balances);
+    res.json({ balances });
   } catch (error) {
     console.error('Erreur GET /sellers/me/balance:', error);
     res.status(500).json({ error: 'Erreur serveur' });
@@ -1250,17 +1392,32 @@ router.get('/me/payouts', requireAuth, requireSeller, async (req, res) => {
 router.get('/me/earnings', requireAuth, requireSeller, async (req, res) => {
   try {
     const LedgerService = require('./services/ledger.service');
-    const [balances, totalOrders] = await Promise.all([
+    const validWhere = {
+      sellerId: req.seller.id,
+      order: { status: { notIn: ['CANCELLED', 'REFUNDED'] } },
+    };
+    const [balances, totals, orderIds] = await Promise.all([
       LedgerService.getSellerBalances(req.seller.id),
-      db.orderItem.count({ where: { sellerId: req.seller.id } }),
+      db.orderItem.aggregate({
+        where: validWhere,
+        _sum: { totalPrice: true, sellerEarnings: true, quantity: true },
+        _count: { _all: true },
+      }),
+      db.orderItem.findMany({ where: validWhere, distinct: ['orderId'], select: { orderId: true } }),
     ]);
 
+    const totalSales = totals._sum.totalPrice || 0;
+    const totalEarnings = totals._sum.sellerEarnings || 0;
+
     res.json({
-      totalSales: req.seller.totalSales,
-      totalEarnings: balances.totalEarnings,
+      totalSales,
+      totalEarnings,
       commissionRate: req.seller.commissionRate,
-      totalOrders,
+      totalOrders: orderIds.length,
+      totalItemsSold: totals._sum.quantity || 0,
+      totalOrderLines: totals._count._all,
       balances,
+      availableBalance: balances.available,
       pendingPayoutAmount: balances.reserved,
     });
   } catch (error) {
@@ -1272,7 +1429,7 @@ router.get('/me/earnings', requireAuth, requireSeller, async (req, res) => {
 // ==================== ADMIN (avant /:id) ====================
 
 // GET tous les vendeurs (admin)
-router.get('/admin/all', requireAuth, requireAdmin, async (req, res) => {
+router.get('/admin/all', requireAuth, requireRole(['admin', 'manager']), async (req, res) => {
   try {
     const { status } = req.query;
     const where = status ? { status } : {};
@@ -1297,7 +1454,7 @@ router.get('/admin/all', requireAuth, requireAdmin, async (req, res) => {
 });
 
 // GET tous les payouts (admin)
-router.get('/admin/payouts', requireAuth, requireAdmin, async (req, res) => {
+router.get('/admin/payouts', requireAuth, requireRole(['admin', 'manager']), async (req, res) => {
   try {
     const { status } = req.query;
     const where = status ? { status } : {};

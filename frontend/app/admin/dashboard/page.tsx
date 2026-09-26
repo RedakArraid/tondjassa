@@ -59,8 +59,8 @@ interface DashboardStats {
     totalOrders: number;
     averageOrderValue: number;
     revenueGrowth: number;
-    dailyRevenue: Array<{ date: string; revenue: number; orders: number }>;
-    monthlyRevenue: Array<{ month: string; revenue: number; orders: number }>;
+    dailyRevenue: Array<{ date?: string; month?: string; revenue: number; orders: number }>;
+    monthlyRevenue: Array<{ date?: string; month?: string; revenue: number; orders: number }>;
     topProducts: Array<{ id: number; name: string; revenue: number; units: number }>;
     revenueByCategory: Array<{ category: string; revenue: number; percentage: number }>;
   };
@@ -112,6 +112,10 @@ export default function AdminDashboard() {
     // Les vendeurs doivent utiliser leur espace /vendeur, pas l'admin
     if (parsedUser?.role === 'seller') {
       router.push('/vendeur/dashboard');
+      return;
+    }
+    if (parsedUser?.role === 'support') {
+      router.push('/support/dashboard');
       return;
     }
     setToken(savedToken);
@@ -254,16 +258,16 @@ export default function AdminDashboard() {
   // Interface principale
   return (
     <AuthGuard>
-      <div className="flex min-h-screen bg-brand-cream">
+      <div className="flex min-h-screen flex-col bg-brand-cream lg:flex-row">
         {/* Sidebar */}
-        <aside className="w-64 bg-brand-navy text-white flex flex-col justify-between shadow-lg">
+        <aside className="w-full bg-brand-navy text-white flex flex-col justify-between shadow-lg lg:w-64 lg:flex-shrink-0">
           <div>
             <div className="p-6 border-b border-white/10">
               <h1 className="text-2xl font-extrabold">
                 <span className="text-white">Mande</span>
                 <span className="text-brand-orange">Market</span>
               </h1>
-              <p className="text-brand-orange font-medium text-sm mt-1">Super Admin</p>
+              <p className="text-brand-orange font-medium text-sm mt-1">{user.role === 'admin' ? 'Super Admin' : 'Manager · accès opérationnel'}</p>
               <p className="text-sm text-white/50 mt-1 truncate">{user.email}</p>
             </div>
             
@@ -416,7 +420,7 @@ export default function AdminDashboard() {
         </aside>
 
         {/* Contenu principal */}
-        <main className="flex-1 p-8">
+        <main className="min-w-0 w-full flex-1 overflow-x-hidden p-4 sm:p-6 lg:p-8">
           {activeSection === 'dashboard' && (
             <DashboardAnalytics 
               stats={stats} 
@@ -459,13 +463,13 @@ export default function AdminDashboard() {
           {activeSection === 'vendeurs' && (
             <div>
               <h1 className="text-3xl font-bold text-gray-900 mb-8">Gestion des Vendeurs (Marketplace)</h1>
-              <SellersManager />
+              <SellersManager readOnly={user.role !== 'admin'} />
             </div>
           )}
           {activeSection === 'payouts' && (
             <div>
               <h1 className="text-3xl font-bold text-gray-900 mb-8">Versements vendeurs</h1>
-              <PayoutsManager />
+              <PayoutsManager readOnly={user.role !== 'admin'} />
             </div>
           )}
           {activeSection === 'utilisateurs' && (
@@ -483,7 +487,7 @@ export default function AdminDashboard() {
           {activeSection === 'retours' && (
             <div>
               <h1 className="text-3xl font-bold text-gray-900 mb-8">Gestion des Retours</h1>
-              <ReturnsModerationManager />
+              <ReturnsModerationManager canRefund={user.role === 'admin'} />
             </div>
           )}
           {activeSection === 'audit' && (
@@ -519,7 +523,7 @@ function DashboardAnalytics({
   return (
     <div className="space-y-8">
       {/* Header avec bouton refresh */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col items-start gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-3xl font-bold text-gray-900">Dashboard Analytics</h1>
           <p className="text-gray-600 mt-1">Vue d'ensemble de votre activité e-commerce</p>

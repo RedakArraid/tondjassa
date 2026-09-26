@@ -27,7 +27,7 @@
     "docker:exec:frontend": "docker compose exec frontend sh",
     "docker:exec:postgres": "docker compose exec postgres psql -U postgres -d mandemarket",
     "docker:health": "docker compose ps",
-    "docker:migrate": "docker compose exec backend npx prisma migrate deploy",
+    "docker:migrate": "docker compose exec backend /app/node_modules/.bin/prisma migrate deploy",
     "docker:debug": "docker compose logs --tail=50 && docker compose ps",
     "setup:docker": "npm run docker:build && npm run docker:up && npm run docker:wait && npm run docker:migrate",
     "docker:wait": "echo 'Attente des services...' && sleep 60",
@@ -78,13 +78,13 @@
     "mandemarket",
     "cote-divoire"
   ],
-  "author": {
-    "name": "MandeMarket Team",
-    "email": "dev@mandemarket.com",
-    "url": "https://mandemarket.com"
-  },
+  "author": "MandeMarket Team <dev@mandemarket.com> (https://mandemarket.com)",
   "license": "MIT",
   "engines": {
     "node": ">=24 <25"
+  },
+  "main": "index.js",
+  "directories": {
+    "doc": "docs"
   }
 }

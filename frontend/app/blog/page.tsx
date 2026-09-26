@@ -1,8 +1,11 @@
 'use client';
 
+import { useState } from 'react';
 import PublicHeader from '../components/PublicHeader';
 import PublicFooter from '../components/PublicFooter';
 import Link from 'next/link';
+import { ContactService } from '../config/api';
+import { blogPosts } from './posts';
 import { 
   CalendarDaysIcon,
   UserIcon,
@@ -11,50 +14,31 @@ import {
   TagIcon
 } from '@heroicons/react/24/outline';
 
-const blogPosts = [
-  {
-    id: 1,
-    title: "Comment choisir le sac à main parfait pour chaque occasion",
-    excerpt: "Découvrez nos conseils d'experts pour sélectionner le sac idéal selon vos besoins et votre style de vie.",
-    image: "https://images.unsplash.com/photo-1584917865442-de89df76afd3?w=800&h=600&fit=crop",
-    category: "Conseils",
-    author: "Marie Kouassi",
-    date: "15 Oct 2024",
-    readTime: "5 min"
-  },
-  {
-    id: 2,
-    title: "Tendances sacs à main 2024 : Les must-have de la saison",
-    excerpt: "Explorez les dernières tendances en matière de sacs à main et découvrez les styles qui font sensation cette année.",
-    image: "https://images.unsplash.com/photo-1553062407-98eeb64c6a62?w=800&h=600&fit=crop",
-    category: "Tendances",
-    author: "Sophie Diallo",
-    date: "10 Oct 2024",
-    readTime: "7 min"
-  },
-  {
-    id: 3,
-    title: "Entretien et soin de vos sacs en cuir : Guide complet",
-    excerpt: "Apprenez les meilleures techniques pour préserver la beauté et la durabilité de vos sacs en cuir premium.",
-    image: "https://images.unsplash.com/photo-1581605405669-fcdf81165afa?w=800&h=600&fit=crop",
-    category: "Entretien",
-    author: "Jean-Paul Touré",
-    date: "5 Oct 2024",
-    readTime: "6 min"
-  },
-  {
-    id: 4,
-    title: "L'histoire de MandeMarket : Une passion ivoirienne",
-    excerpt: "Découvrez l'histoire de notre marque et notre engagement envers la qualité et l'excellence en Côte d'Ivoire.",
-    image: "https://images.unsplash.com/photo-1553062407-98eeb64c6a62?w=800&h=600&fit=crop",
-    category: "À propos",
-    author: "Direction MandeMarket",
-    date: "1 Oct 2024",
-    readTime: "4 min"
-  }
-];
-
 export default function BlogPage() {
+  const [email, setEmail] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
+  const handleSubscribe = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const value = email.trim();
+    if (!value) return;
+    setLoading(true);
+    setMessage(null);
+    try {
+      await ContactService.subscribeNewsletter(value);
+      setEmail('');
+      setMessage({ type: 'success', text: 'Votre inscription est confirmée.' });
+    } catch (error) {
+      setMessage({
+        type: 'error',
+        text: error instanceof Error ? error.message : 'Inscription impossible pour le moment.',
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-orange-50/30 via-white to-orange-50/30">
       <PublicHeader />
@@ -156,16 +140,28 @@ export default function BlogPage() {
           <p className="text-xl text-orange-100 mb-8">
             Inscrivez-vous à notre newsletter pour recevoir nos derniers articles et offres exclusives
           </p>
-          <div className="flex flex-col sm:flex-row gap-3 max-w-md mx-auto">
+          <form onSubmit={handleSubscribe} className="flex flex-col sm:flex-row gap-3 max-w-md mx-auto">
             <input
               type="email"
+              required
+              value={email}
+              onChange={(event) => setEmail(event.target.value)}
               placeholder="Votre email..."
               className="flex-1 px-6 py-4 rounded-xl text-gray-900 focus:ring-4 focus:ring-orange-300 focus:outline-none font-medium"
             />
-            <button className="px-8 py-4 bg-white text-orange-600 font-bold rounded-xl hover:bg-gray-50 transition-all shadow-xl hover:scale-105">
-              S'inscrire
+            <button
+              type="submit"
+              disabled={loading}
+              className="px-8 py-4 bg-white text-orange-600 font-bold rounded-xl hover:bg-gray-50 transition-all shadow-xl hover:scale-105 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {loading ? 'Inscription…' : 'S’inscrire'}
             </button>
-          </div>
+          </form>
+          {message && (
+            <p role="status" className={`mt-3 text-sm font-semibold ${message.type === 'success' ? 'text-white' : 'text-red-100'}`}>
+              {message.text}
+            </p>
+          )}
         </div>
       </section>
 

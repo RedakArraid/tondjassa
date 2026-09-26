@@ -46,7 +46,7 @@ interface Pagination {
   pages: number;
 }
 
-export default function ReturnsModerationManager() {
+export default function ReturnsModerationManager({ canRefund = false }: { canRefund?: boolean }) {
   const [returns, setReturns] = useState<ReturnRequest[]>([]);
   const [pagination, setPagination] = useState<Pagination | null>(null);
   const [statusFilter, setStatusFilter] = useState<'all' | 'pending' | 'approved' | 'rejected' | 'completed'>('all');
@@ -265,7 +265,7 @@ export default function ReturnsModerationManager() {
                       </>
                     )}
 
-                    {ret.status === 'approved' && (
+                    {canRefund && ret.status === 'approved' && (
                       <button
                         onClick={() => { setItemsReceived(false); setRefundModal(ret); }}
                         disabled={actionLoading === ret.id}
@@ -318,16 +318,20 @@ export default function ReturnsModerationManager() {
               </p>
               <div className="flex gap-2">
                 <button
+                  type="button"
                   disabled={page <= 1}
                   onClick={() => setPage((p) => p - 1)}
                   className="p-2 border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-40"
+                  aria-label="Page précédente des retours"
                 >
                   <ChevronLeftIcon className="w-4 h-4" />
                 </button>
                 <button
+                  type="button"
                   disabled={page >= pagination.pages}
                   onClick={() => setPage((p) => p + 1)}
                   className="p-2 border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-40"
+                  aria-label="Page suivante des retours"
                 >
                   <ChevronRightIcon className="w-4 h-4" />
                 </button>
@@ -387,7 +391,7 @@ export default function ReturnsModerationManager() {
       )}
 
       {/* Modal Confirmation Remboursement */}
-      {refundModal && (
+      {canRefund && refundModal && (
         <div
           className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center px-4"
           onClick={() => setRefundModal(null)}
@@ -412,7 +416,7 @@ export default function ReturnsModerationManager() {
             <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-[11px] text-amber-800 mb-4">
               Le paiement ne sera marque rembourse qu'apres confirmation du prestataire.
               Un delai ou une erreur reseau conserve la demande pour reconciliation.
-              Les remboursements CinetPay ou hors ligne demandent une attestation administrative.
+              Les remboursements hors ligne demandent une attestation administrative.
               <label className="flex items-start gap-2 mt-3">
                 <input type="checkbox" checked={itemsReceived} onChange={e => setItemsReceived(e.target.checked)} />
                 Tous les articles ont ete physiquement recus et peuvent etre remis en stock.

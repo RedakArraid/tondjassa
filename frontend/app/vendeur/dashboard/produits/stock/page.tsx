@@ -10,8 +10,11 @@ import {
   SellerEmptyState,
 } from '../../_components/ui';
 import { ExclamationTriangleIcon, CheckCircleIcon } from '@heroicons/react/24/outline';
+import { useSellerAccess } from '../../_components/access';
 
 export default function StockPage() {
+  const { can } = useSellerAccess();
+  const canWrite = can('catalog.write');
   const [loading, setLoading] = useState(true);
   const [products, setProducts] = useState<any[]>([]);
   const [updatingId, setUpdatingId] = useState<number | null>(null);
@@ -135,7 +138,7 @@ export default function StockPage() {
                       <td className="py-3 px-3 text-center text-xs text-gray-500">{reserved}</td>
                       <td className="py-3 px-3 text-center font-bold text-gray-900">{total}</td>
                       <td className="py-3 px-3 text-right">
-                        <div className="inline-flex items-center gap-1.5 justify-end">
+                        {canWrite ? <div className="inline-flex items-center gap-1.5 justify-end">
                           <button
                             type="button"
                             disabled={isUpdating || total <= 0}
@@ -170,7 +173,7 @@ export default function StockPage() {
                           >
                             Modifier
                           </SellerActionButton>
-                        </div>
+                        </div> : <span className="text-xs text-gray-400">Lecture seule</span>}
                       </td>
                     </tr>
                   );

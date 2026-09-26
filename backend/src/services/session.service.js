@@ -32,10 +32,10 @@ async function authenticateToken(token) {
   return { userId: session.userId, sid: session.id, role: session.user.role, email: session.user.email,
     customerId: session.user.customer?.id || null };
 }
-async function issueSession(user, req, res) {
+async function issueSession(user, req, res, portal) {
   ensureUserActive(user);
   const session = await createSession(user.id, req);
-  setRefreshCookie(res, user.role, session.refreshToken);
+  setRefreshCookie(res, portal === 'staff' ? 'seller' : user.role, session.refreshToken);
   const accessToken = generateAccessToken(user, session.sessionId);
   return { accessToken, token: accessToken };
 }

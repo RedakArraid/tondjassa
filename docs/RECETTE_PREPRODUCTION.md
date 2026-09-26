@@ -45,11 +45,11 @@ Ne pas choisir un nouveau service payant et ne pas reutiliser les volumes de pro
 
 La validation hebergeur reste distincte : routage, certificat public, adresses IP
 vues derriere Traefik, delivrabilite SMTP reelle, comptes administrateur et vendeur,
-et scenarios sandbox contractuels Stripe/Paystack/CinetPay doivent etre verifies.
+et scenarios sandbox contractuels Paystack (Côte d'Ivoire, XOF) et Stripe (Europe) doivent etre verifies.
 Aucune transaction reelle ne doit etre creee pour cette recette.
 
-Conserver les limitations du runbook : remboursements CinetPay/hors ligne avec
-attestation d'une operation externe reelle, suivi transporteur manuel, rapprochement
+Conserver les limitations du runbook : remboursements hors ligne avec attestation
+d'une operation externe reelle, suivi transporteur manuel, rapprochement
 des donnees historiques, sauvegarde chiffree hors serveur et alertes a valider.
 La PR reste en brouillon tant que ces conditions ne sont pas satisfaites.
 

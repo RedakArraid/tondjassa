@@ -14,6 +14,8 @@ const apiOrigin = safeOrigin(apiUrl);
 const httpsSite = Boolean(siteOrigin && siteOrigin.startsWith('https://'));
 const connectSources = ["'self'"];
 if (apiOrigin && apiOrigin !== siteOrigin) connectSources.push(apiOrigin);
+// Géolocalisation pays côté client (RegionContext), limitée à l'origine utilisée.
+connectSources.push('https://ipapi.co');
 
 const contentSecurityPolicy = [
   "default-src 'self'",

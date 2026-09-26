@@ -209,16 +209,20 @@ export default function AuditLogsManager() {
               </p>
               <div className="flex gap-2">
                 <button
+                  type="button"
                   disabled={page <= 1}
                   onClick={() => setPage((p) => p - 1)}
                   className="p-1.5 border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-40"
+                  aria-label="Page précédente du journal d’audit"
                 >
                   <ChevronLeftIcon className="w-4 h-4" />
                 </button>
                 <button
+                  type="button"
                   disabled={page >= pagination.pages}
                   onClick={() => setPage((p) => p + 1)}
                   className="p-1.5 border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-40"
+                  aria-label="Page suivante du journal d’audit"
                 >
                   <ChevronRightIcon className="w-4 h-4" />
                 </button>

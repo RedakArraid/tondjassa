@@ -36,11 +36,12 @@ Matrice établie pour la traçabilité des contrats d'interface (section 5 de `P
 
 | Endpoint Backend | Méthode | Rôle requis | Page Frontend associée | Statut |
 |---|---|---|---|---|
-| `/api/payments/initialize` | POST | Client | `/checkout` | À unifier |
-| `/api/payments/verify/:reference` | GET | Client | `/paiement/statut` | À refaire |
-| `/api/webhooks/cinetpay` | POST | Public (HMAC vérifié) | N/A (Serveur à Serveur) | À sécuriser (P0) |
-| `/api/webhooks/paystack` | POST | Public (Signature vérifiée) | N/A (Serveur à Serveur) | À sécuriser (P0) |
-| `/api/webhooks/stripe` | POST | Public (Signature vérifiée) | N/A (Serveur à Serveur) | À sécuriser (P0) |
+| `/api/payment/providers?country=CI` | GET | Public | `/checkout` | Implémenté |
+| `/api/payment/initiate` | POST | Client ou capacité commande invité | `/checkout` | Implémenté |
+| `/api/payment/status/:orderId` | GET | Client ou capacité commande invité | `/checkout/success`, `/commande/[id]` | Implémenté |
+| `/api/payment/verify/:gateway/:reference` | GET | Client ou capacité commande invité | `/checkout/success` | Implémenté |
+| `/api/payment/webhook/paystack` | POST | Public, HMAC SHA-512 obligatoire | N/A (serveur à serveur) | Implémenté |
+| `/api/payment/webhook/stripe` | POST | Public, signature Stripe obligatoire | N/A (serveur à serveur) | Implémenté |
 
 ---
 
@@ -71,3 +72,24 @@ Matrice établie pour la traçabilité des contrats d'interface (section 5 de `P
 | `/api/admin/payouts/:id/process` | POST | Admin | `/admin/finances` | **À créer (P0)** |
 | `/api/admin/payouts/:id/fail` | POST | Admin | `/admin/finances` | **À créer (P0)** |
 | `/api/admin/audit-logs` | GET | Admin | `/admin/securite` | **À créer (P1)** |
+
+---
+
+## 6. Support & Notifications vendeur
+
+| Endpoint Backend | Méthode | Rôle requis | Page Frontend associée | Statut |
+|---|---|---|---|---|
+| `/api/support/stats` | GET | Support / Admin | `/support/dashboard` | Implémenté |
+| `/api/support/tickets` | GET | Support / Admin | `/support/dashboard` | Implémenté |
+| `/api/support/tickets/:id` | GET, PATCH | Support / Admin | `/support/dashboard` | Implémenté |
+| `/api/support/tickets/:id/replies` | POST | Support / Admin | `/support/dashboard` | Implémenté |
+| `/api/support/tickets/:id/messages` | POST | Support / Admin | Alias rétrocompatible | Implémenté |
+| `/api/sellers/me/support/tickets` | GET, POST | Vendeur de la boutique | `/vendeur/dashboard/communication/support` | Implémenté |
+| `/api/sellers/me/notifications` | GET | Vendeur de la boutique | Cloche vendeur | Implémenté |
+| `/api/sellers/me/notifications/:id/read` | PATCH | Vendeur propriétaire | Cloche vendeur | Implémenté |
+| `/api/sellers/me/notifications/read-all` | PATCH | Vendeur de la boutique | Cloche vendeur | Implémenté |
+| `/api/contact` | POST | Public | `/contact` | Implémenté, crée un ticket durable |
+
+Les anciens verbes `PUT /notifications/:id/read` et `POST /notifications/read-all`
+restent disponibles comme alias de compatibilité. Les notes support marquées
+`internal: true` ne sont jamais exposées au vendeur et ne déclenchent aucun email.

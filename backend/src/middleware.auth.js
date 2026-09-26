@@ -16,9 +16,19 @@ function requireRole(role) {
 const requireAdmin = requireRole('admin');
 async function requireSeller(req, res, next) {
   try {
-    const seller = await db.seller.findUnique({ where: { userId: req.user.userId } });
+    let seller = await db.seller.findUnique({ where: { userId: req.user.userId } });
+    let access = seller ? { isOwner: true, role: 'owner', permissions: ['*'] } : null;
+    if (!seller) {
+      const member = await db.sellerMember.findFirst({ where: { userId: req.user.userId, status: 'active' }, include: { seller: true } });
+      seller = member?.seller;
+      if (member) access = { isOwner: false, memberId: member.id, role: member.role, permissions: member.permissions };
+    }
     if (!seller || seller.status !== 'approved') return res.status(403).json({ error: 'Boutique non approuvee' });
-    req.seller = seller; next();
+    const needed = require('./services/seller-access.service').requiredPermission(req);
+    if (!access.isOwner && !access.permissions.includes(needed)) return res.status(403).json({ error: 'Permission vendeur insuffisante', permission: needed });
+    req.seller = seller;
+    req.sellerAccess = access;
+    next();
   } catch { res.status(503).json({ error: 'Service temporairement indisponible' }); }
 }
 function optionalAuth(req, res, next) {

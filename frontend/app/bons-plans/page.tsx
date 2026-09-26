@@ -6,6 +6,8 @@ import PublicHeader from '../components/PublicHeader';
 import PublicFooter from '../components/PublicFooter';
 import { useStore } from '../contexts/StoreContext';
 import { HeartIcon, ArrowRightIcon } from '@heroicons/react/24/outline';
+import { HeartIcon as HeartSolidIcon } from '@heroicons/react/24/solid';
+import { useWishlist } from '../hooks/useWishlist';
 
 const DEAL_CATEGORIES = [
   { name: 'High-Tech', discount: 'Jusqu\'à -50%', image: 'https://images.unsplash.com/photo-1585515320310-259814833e87?w=600&h=400&fit=crop' },
@@ -15,6 +17,15 @@ const DEAL_CATEGORIES = [
 ];
 
 const FILTERS = ['Tous', 'High-Tech', 'Mode', 'Maison', 'Alimentation', 'Beauté', 'Sport'];
+
+const FILTER_KEYWORDS: Record<string, string[]> = {
+  'High-Tech': ['electronique', 'électronique', 'informatique', 'smartphone', 'tablette'],
+  Mode: ['mode', 'vetement', 'vêtement', 'sac', 'maroquinerie', 'accessoire'],
+  Maison: ['maison', 'decoration', 'décoration', 'mobilier'],
+  Alimentation: ['alimentation', 'boisson', 'epice', 'épice', 'naturel'],
+  Beauté: ['beaute', 'beauté', 'sante', 'santé', 'cosmetique', 'cosmétique', 'karite', 'karité'],
+  Sport: ['sport', 'loisir'],
+};
 
 function formatPrice(cents: number) {
   return `${Math.round(cents / 100).toLocaleString('fr-FR')} FCFA`;
@@ -58,8 +69,9 @@ function Countdown() {
 export default function BonsPlansPage() {
   const { getActiveProducts, isHydrated } = useStore();
   const [filter, setFilter] = useState('Tous');
+  const { isInWishlist, toggle } = useWishlist();
 
-  const products = useMemo(() => {
+  const allDeals = useMemo(() => {
     if (!isHydrated) return [];
     return getActiveProducts().slice(0, 8).map((p: any, i: number) => {
       const discount = [32, 28, 40, 25, 35, 22, 45, 18][i % 8];
@@ -68,6 +80,20 @@ export default function BonsPlansPage() {
       return { ...p, discount, current, original };
     });
   }, [isHydrated, getActiveProducts]);
+
+  const products = useMemo(() => {
+    if (filter === 'Tous') return allDeals;
+    const keywords = FILTER_KEYWORDS[filter] || [];
+    return allDeals.filter((product: any) => {
+      const searchable = [
+        product.name,
+        product.description,
+        product.category?.name,
+        product.category?.slug,
+      ].filter(Boolean).join(' ').toLocaleLowerCase('fr');
+      return keywords.some((keyword) => searchable.includes(keyword));
+    });
+  }, [allDeals, filter]);
 
   return (
     <div className="min-h-screen bg-brand-cream">
@@ -125,23 +151,37 @@ export default function BonsPlansPage() {
           <h2 className="text-2xl font-extrabold text-brand-navy mb-6">Offres flash</h2>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
             {products.slice(0, 4).map((p: any) => (
-              <Link key={p.id} href={`/boutique/${p.id}`} className="bg-white rounded-2xl shadow-card overflow-hidden border border-gray-100 group">
+              <article key={p.id} className="bg-white rounded-2xl shadow-card overflow-hidden border border-gray-100 group">
                 <div className="relative aspect-square bg-gray-50">
-                  <img src={p.image || 'https://images.unsplash.com/photo-1584917865442-de89df76afd3?w=400'} alt={p.name} className="w-full h-full object-cover group-hover:scale-105 transition duration-500" />
-                  <button type="button" className="absolute top-3 right-3 w-8 h-8 rounded-full bg-white/90 flex items-center justify-center" aria-label="Favori">
-                    <HeartIcon className="w-4 h-4 text-gray-500" />
+                  <Link href={`/boutique/${p.id}`} className="block h-full">
+                    <img src={p.image || 'https://images.unsplash.com/photo-1584917865442-de89df76afd3?w=400'} alt={p.name} className="w-full h-full object-cover group-hover:scale-105 transition duration-500" />
+                  </Link>
+                  <button
+                    type="button"
+                    onClick={() => toggle(Number(p.id))}
+                    className="absolute top-3 right-3 w-8 h-8 rounded-full bg-white/90 flex items-center justify-center"
+                    aria-label={isInWishlist(Number(p.id)) ? 'Retirer des favoris' : 'Ajouter aux favoris'}
+                  >
+                    {isInWishlist(Number(p.id))
+                      ? <HeartSolidIcon className="w-4 h-4 text-red-500" />
+                      : <HeartIcon className="w-4 h-4 text-gray-500" />}
                   </button>
                 </div>
                 <div className="p-4 relative">
-                  <p className="font-semibold text-brand-navy line-clamp-1">{p.name}</p>
+                  <Link href={`/boutique/${p.id}`} className="font-semibold text-brand-navy line-clamp-1 hover:text-brand-orange">{p.name}</Link>
                   <p className="font-extrabold mt-1">{formatPrice(p.current)}</p>
                   <p className="text-sm text-gray-400 line-through">{formatPrice(p.original)}</p>
                   <span className="absolute bottom-4 right-4 bg-brand-orange text-white text-xs font-bold px-2 py-1 rounded">
                     -{p.discount}%
                   </span>
                 </div>
-              </Link>
+              </article>
             ))}
+            {products.length === 0 && (
+              <p className="col-span-full rounded-2xl bg-white p-8 text-center text-gray-600">
+                Aucune offre ne correspond à ce filtre pour le moment.
+              </p>
+            )}
           </div>
         </div>
       </section>
@@ -200,7 +240,7 @@ export default function BonsPlansPage() {
           </h2>
           <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-5">
             {DEAL_CATEGORIES.map((c) => (
-              <Link key={c.name} href="/boutique" className="bg-white rounded-2xl overflow-hidden shadow-card border border-gray-100 group">
+              <Link key={c.name} href={`/boutique?search=${encodeURIComponent(c.name)}`} className="bg-white rounded-2xl overflow-hidden shadow-card border border-gray-100 group">
                 <div className="aspect-[4/3] overflow-hidden">
                   <img src={c.image} alt={c.name} className="w-full h-full object-cover group-hover:scale-105 transition duration-500" />
                 </div>

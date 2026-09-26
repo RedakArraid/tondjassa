@@ -57,7 +57,6 @@ const PAYMENT_LABELS: Record<string, string> = {
   mtn_momo:      'MTN Mobile Money',
   orange_money:  'Orange Money',
   wave:          'Wave',
-  moov_money:    'Moov Money',
   cash_on_delivery: 'Paiement à la livraison',
   stripe:        'Carte bancaire / SEPA',
   paystack:      'Mobile Money / Carte',

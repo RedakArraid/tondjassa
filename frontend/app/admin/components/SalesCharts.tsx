@@ -23,12 +23,21 @@ import {
   ChartBarIcon,
   ArrowDownTrayIcon
 } from '@heroicons/react/24/outline';
-import { formatCurrency, formatDate } from '../../config/analytics';
+import { formatCurrency } from '../../config/analytics';
+import { formatChartDate, normalizeSalesSeries } from './sales-chart-data';
+
+interface SalesSeriesPoint {
+  date?: string;
+  month?: string;
+  label?: string;
+  revenue: number;
+  orders: number;
+}
 
 interface SalesChartsProps {
   data: {
-    dailyRevenue: Array<{ date: string; revenue: number; orders: number }>;
-    monthlyRevenue: Array<{ month: string; revenue: number; orders: number }>;
+    dailyRevenue: SalesSeriesPoint[];
+    monthlyRevenue: SalesSeriesPoint[];
     topProducts: Array<{ id: number; name: string; revenue: number; units: number }>;
     revenueByCategory: Array<{ category: string; revenue: number; percentage: number }>;
   } | null;
@@ -49,7 +58,13 @@ const SalesCharts: React.FC<SalesChartsProps> = ({ data, loading = false }) => {
     revenueByCategory: []
   };
 
-  const chartData = data || defaultData;
+  const sourceData = data || defaultData;
+  const chartData = {
+    ...sourceData,
+    dailyRevenue: normalizeSalesSeries(sourceData.dailyRevenue),
+    monthlyRevenue: normalizeSalesSeries(sourceData.monthlyRevenue),
+  };
+  const activeSeries = activeChart === 'daily' ? chartData.dailyRevenue : chartData.monthlyRevenue;
   
   // Si pas de données, afficher un message
   if (!data || (chartData.dailyRevenue.length === 0 && chartData.topProducts.length === 0)) {
@@ -67,6 +82,23 @@ const SalesCharts: React.FC<SalesChartsProps> = ({ data, loading = false }) => {
   const formatTooltipValue = (value: number, name: string) => {
     if (name === 'revenue') return formatCurrency(value);
     return value.toString();
+  };
+
+  const handleExport = () => {
+    const escapeCsv = (value: unknown) => `"${String(value ?? '').replaceAll('"', '""')}"`;
+    const csv = [
+      [activeChart === 'daily' ? 'Date' : 'Mois', 'Chiffre d’affaires', 'Commandes'],
+      ...activeSeries.map((row) => [row.date, row.revenue, row.orders]),
+    ].map((row) => row.map(escapeCsv).join(',')).join('\n');
+
+    const url = URL.createObjectURL(new Blob([`\uFEFF${csv}`], { type: 'text/csv;charset=utf-8' }));
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `ventes-${activeChart}-${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
   };
 
   if (loading) {
@@ -87,8 +119,8 @@ const SalesCharts: React.FC<SalesChartsProps> = ({ data, loading = false }) => {
   return (
     <div className="space-y-6">
       {/* Graphique principal - Évolution des ventes */}
-      <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-        <div className="flex items-center justify-between mb-6">
+      <div className="min-w-0 overflow-hidden bg-white rounded-lg shadow-sm border border-gray-200 p-4 sm:p-6">
+        <div className="flex flex-col gap-4 mb-6 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <h3 className="text-lg font-semibold text-gray-900">
               Évolution des {viewMode === 'revenue' ? 'Ventes' : 'Commandes'}
@@ -98,11 +130,13 @@ const SalesCharts: React.FC<SalesChartsProps> = ({ data, loading = false }) => {
             </p>
           </div>
           
-          <div className="flex items-center space-x-2">
+          <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
             {/* Sélecteur période */}
             <div className="flex bg-gray-100 rounded-lg p-1">
               <button
+                type="button"
                 onClick={() => setActiveChart('daily')}
+                aria-pressed={activeChart === 'daily'}
                 className={`px-3 py-1 text-sm font-medium rounded-md transition-colors ${
                   activeChart === 'daily'
                     ? 'bg-white text-gray-900 shadow-sm'
@@ -113,7 +147,9 @@ const SalesCharts: React.FC<SalesChartsProps> = ({ data, loading = false }) => {
                 7 jours
               </button>
               <button
+                type="button"
                 onClick={() => setActiveChart('monthly')}
+                aria-pressed={activeChart === 'monthly'}
                 className={`px-3 py-1 text-sm font-medium rounded-md transition-colors ${
                   activeChart === 'monthly'
                     ? 'bg-white text-gray-900 shadow-sm'
@@ -128,7 +164,9 @@ const SalesCharts: React.FC<SalesChartsProps> = ({ data, loading = false }) => {
             {/* Sélecteur métrique */}
             <div className="flex bg-gray-100 rounded-lg p-1">
               <button
+                type="button"
                 onClick={() => setViewMode('revenue')}
+                aria-pressed={viewMode === 'revenue'}
                 className={`px-3 py-1 text-sm font-medium rounded-md transition-colors ${
                   viewMode === 'revenue'
                     ? 'bg-white text-gray-900 shadow-sm'
@@ -138,7 +176,9 @@ const SalesCharts: React.FC<SalesChartsProps> = ({ data, loading = false }) => {
                 CA
               </button>
               <button
+                type="button"
                 onClick={() => setViewMode('orders')}
+                aria-pressed={viewMode === 'orders'}
                 className={`px-3 py-1 text-sm font-medium rounded-md transition-colors ${
                   viewMode === 'orders'
                     ? 'bg-white text-gray-900 shadow-sm'
@@ -150,7 +190,13 @@ const SalesCharts: React.FC<SalesChartsProps> = ({ data, loading = false }) => {
             </div>
 
             {/* Bouton export */}
-            <button className="p-2 text-gray-400 hover:text-gray-600 rounded-lg hover:bg-gray-50">
+            <button
+              type="button"
+              onClick={handleExport}
+              className="p-2 text-gray-400 hover:text-gray-600 rounded-lg hover:bg-gray-50"
+              aria-label="Exporter les données de vente en CSV"
+              title="Exporter en CSV"
+            >
               <ArrowDownTrayIcon className="w-5 h-5" />
             </button>
           </div>
@@ -158,7 +204,7 @@ const SalesCharts: React.FC<SalesChartsProps> = ({ data, loading = false }) => {
 
         <ResponsiveContainer width="100%" height={300}>
           <AreaChart
-            data={activeChart === 'daily' ? chartData.dailyRevenue : chartData.monthlyRevenue}
+            data={activeSeries}
             margin={{ top: 10, right: 30, left: 0, bottom: 0 }}
           >
             <defs>
@@ -169,8 +215,8 @@ const SalesCharts: React.FC<SalesChartsProps> = ({ data, loading = false }) => {
             </defs>
             <CartesianGrid strokeDasharray="3 3" className="opacity-30" />
             <XAxis 
-              dataKey={activeChart === 'daily' ? 'date' : 'month'}
-              tickFormatter={(value) => formatDate(value)}
+              dataKey="date"
+              tickFormatter={formatChartDate}
               className="text-xs"
             />
             <YAxis 
@@ -179,7 +225,7 @@ const SalesCharts: React.FC<SalesChartsProps> = ({ data, loading = false }) => {
             />
             <Tooltip 
               formatter={formatTooltipValue}
-              labelFormatter={(value) => formatDate(value)}
+              labelFormatter={formatChartDate}
               contentStyle={{
                 backgroundColor: 'white',
                 border: '1px solid #e5e7eb',

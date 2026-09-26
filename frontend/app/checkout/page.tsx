@@ -11,7 +11,7 @@ import PublicFooter from '../components/PublicFooter';
 import {
   UserIcon, MapPinIcon, CreditCardIcon, ShoppingBagIcon,
   LockClosedIcon, TruckIcon, CheckCircleIcon, ExclamationCircleIcon,
-  GlobeAltIcon, PhoneIcon, TagIcon,
+  GlobeAltIcon, TagIcon,
 } from '@heroicons/react/24/outline';
 
 type Region = 'africa' | 'europe';
@@ -24,6 +24,12 @@ interface ShippingOption {
   costDisplay: string;
   costXof: number;
   eurCents?: number;
+}
+
+interface PaymentProvider {
+  gateway: string;
+  label: string;
+  methods: string[];
 }
 
 // ─── Pays ─────────────────────────────────────────────────────────────────────
@@ -60,7 +66,6 @@ const EUROPE_COUNTRIES = [
 ];
 
 const EUROPE_CODES = new Set(EUROPE_COUNTRIES.map(c => c.code));
-const UEMOA_CODES = new Set(['SN', 'ML', 'BF', 'TG', 'BJ', 'GN']);
 
 // ─── Côte d'Ivoire : communes et zones de livraison ───────────────────────────
 const ABIDJAN_COMMUNES = [
@@ -83,67 +88,18 @@ function xofToEur(centimesXof: number) {
   return Math.round((centimesXof / 100 / EUR_XOF) * 100) / 100;
 }
 
-const CI_OPERATORS = [
-  {
-    value: 'mtn_momo',
-    label: 'MTN Mobile Money',
-    badge: 'MTN',
-    bg: 'bg-yellow-400',
-    border: 'border-yellow-400',
-    selectedBorder: 'border-yellow-500',
-    selectedBg: 'bg-yellow-50',
-    textBadge: 'text-yellow-900',
-    textLabel: 'text-gray-800',
-    hint: 'Numéro MTN commençant par 05',
-  },
-  {
-    value: 'orange_money',
-    label: 'Orange Money',
-    badge: 'OM',
-    bg: 'bg-orange-500',
-    border: 'border-orange-300',
-    selectedBorder: 'border-orange-500',
-    selectedBg: 'bg-orange-50',
-    textBadge: 'text-white',
-    textLabel: 'text-gray-800',
-    hint: 'Numéro Orange commençant par 07',
-  },
-  {
-    value: 'wave',
-    label: 'Wave',
-    badge: 'W',
-    bg: 'bg-blue-500',
-    border: 'border-blue-300',
-    selectedBorder: 'border-blue-500',
-    selectedBg: 'bg-blue-50',
-    textBadge: 'text-white',
-    textLabel: 'text-gray-800',
-    hint: 'Votre compte Wave CI',
-  },
-  {
-    value: 'moov_money',
-    label: 'Moov Money',
-    badge: 'MM',
-    bg: 'bg-indigo-600',
-    border: 'border-indigo-300',
-    selectedBorder: 'border-indigo-600',
-    selectedBg: 'bg-indigo-50',
-    textBadge: 'text-white',
-    textLabel: 'text-gray-800',
-    hint: 'Numéro Moov commençant par 01',
-  },
-];
-
-const MOBILE_MONEY_VALUES = new Set(CI_OPERATORS.map(o => o.value));
-
-const AFRICA_PAYMENT = [
-  { value: 'paystack',          label: 'Mobile Money / Carte', description: 'MTN MoMo, Orange Money, Wave, Moov, Carte bancaire via Paystack', emoji: '📱' },
-  { value: 'cash_on_delivery',  label: 'Paiement à la livraison', description: 'Payez en espèces à la réception de votre colis', emoji: '💵' },
-];
-
-const EUROPE_PAYMENT = [
-  { value: 'stripe', label: 'Carte bancaire / SEPA', description: 'Visa, Mastercard, SEPA — Paiement sécurisé SSL via Stripe', emoji: '💳' },
-];
+function formatPaymentMethod(method: string) {
+  const labels: Record<string, string> = {
+    cash: 'Paiement à la livraison',
+    card: 'Carte bancaire',
+    mobile_money: 'Mobile Money',
+    mtn_momo: 'MTN Mobile Money',
+    orange_money: 'Orange Money',
+    wave: 'Wave',
+    sepa_debit: 'Prélèvement SEPA',
+  };
+  return labels[method] ?? method.replaceAll('_', ' ');
+}
 
 // ─── Form ─────────────────────────────────────────────────────────────────────
 interface CheckoutForm {
@@ -164,7 +120,7 @@ interface CheckoutForm {
 const INITIAL: CheckoutForm = {
   firstName: '', lastName: '', email: '', phone: '',
   street: '', city: '', commune: '', postalCode: '',
-  countryCode: 'CI', paymentMethod: 'mtn_momo', shippingOptionId: 'STANDARD', notes: '',
+  countryCode: 'CI', paymentMethod: '', shippingOptionId: 'STANDARD', notes: '',
 };
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
@@ -176,6 +132,10 @@ export default function CheckoutPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const checkoutCompleted = useRef(false);
   const [shippingOptions, setShippingOptions] = useState<ShippingOption[]>([]);
+  const [paymentProviders, setPaymentProviders] = useState<PaymentProvider[]>([]);
+  const [enabledCountryCodes, setEnabledCountryCodes] = useState<string[] | null>(null);
+  const [paymentProvidersLoading, setPaymentProvidersLoading] = useState(true);
+  const [paymentProvidersError, setPaymentProvidersError] = useState<string | null>(null);
   const [quoteError, setQuoteError] = useState<string | null>(null);
   const [acceptedQuoteKey, setAcceptedQuoteKey] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -196,6 +156,15 @@ export default function CheckoutPage() {
   const [isQuoteLoading, setIsQuoteLoading] = useState(false);
 
   useEffect(() => { setIsHydrated(true); }, []);
+  useEffect(() => {
+    if (!isHydrated) return;
+    const pendingPromo = sessionStorage.getItem('mm_pending_promo');
+    if (pendingPromo) {
+      setPromoInput(pendingPromo);
+      setAppliedPromo(pendingPromo);
+      sessionStorage.removeItem('mm_pending_promo');
+    }
+  }, [isHydrated]);
   useEffect(() => { if (isHydrated && items.length === 0 && !checkoutCompleted.current) router.push('/boutique'); }, [isHydrated, items.length, router]);
   useEffect(() => { setCountry(form.countryCode); }, [form.countryCode, setCountry]);
 
@@ -226,6 +195,42 @@ export default function CheckoutPage() {
   }, [form.countryCode, totalPrice]);
 
   useEffect(() => {
+    const controller = new AbortController();
+    fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4002'}/api/payment/providers?country=${encodeURIComponent(form.countryCode)}`, {
+      signal: controller.signal,
+    })
+      .then(async response => {
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(data.error || 'Moyens de paiement indisponibles.');
+        if (!Array.isArray(data.providers) || !Array.isArray(data.enabledCountries)) throw new Error('Réponse de paiement invalide.');
+        return { providers: data.providers as PaymentProvider[], enabledCountries: data.enabledCountries as string[] };
+      })
+      .then(({ providers, enabledCountries }) => {
+        if (controller.signal.aborted) return;
+        setEnabledCountryCodes(enabledCountries.filter(code => typeof code === 'string'));
+        const validProviders = providers.filter(provider => (
+          typeof provider.gateway === 'string'
+          && provider.gateway.length > 0
+          && typeof provider.label === 'string'
+          && Array.isArray(provider.methods)
+          && provider.methods.every(method => typeof method === 'string')
+        ));
+        setPaymentProviders(validProviders);
+        setForm(previous => ({ ...previous, paymentMethod: validProviders[0]?.gateway ?? '' }));
+        if (validProviders.length === 0) setPaymentProvidersError('Aucun moyen de paiement n’est disponible pour ce pays.');
+      })
+      .catch(fetchError => {
+        if (controller.signal.aborted) return;
+        setPaymentProvidersError(fetchError instanceof Error ? fetchError.message : 'Moyens de paiement indisponibles.');
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setPaymentProvidersLoading(false);
+      });
+
+    return () => controller.abort();
+  }, [form.countryCode]);
+
+  useEffect(() => {
     if (items.length === 0) return;
     const controller = new AbortController();
     setIsQuoteLoading(true); setQuoteError(null); setServerQuote(null); setAcceptedQuoteKey('');
@@ -238,19 +243,30 @@ export default function CheckoutPage() {
     }).then(data => {
       if (controller.signal.aborted) return;
       setServerQuote(data); setAcceptedQuoteKey(quoteKey);
-      if (data.appliedPromotion) setPromoMessage({ type: 'success', text: `Code promo ${data.appliedPromotion.code} applique` });
-    }).catch(error => { if (!controller.signal.aborted) setQuoteError(error.message || 'Devis indisponible'); })
+      if (data.appliedPromotion) {
+        setPromoMessage({ type: 'success', text: `Code promo ${data.appliedPromotion.code} appliqué` });
+      } else if (appliedPromo) {
+        setPromoMessage({ type: 'error', text: 'Ce code promo n’est pas valide pour ce panier.' });
+      } else {
+        setPromoMessage(null);
+      }
+    }).catch(error => {
+      if (controller.signal.aborted) return;
+      const message = error.message || 'Devis indisponible';
+      setQuoteError(message);
+      if (appliedPromo) setPromoMessage({ type: 'error', text: message });
+    })
       .finally(() => { if (!controller.signal.aborted) setIsQuoteLoading(false); });
     return () => controller.abort();
   }, [quoteKey, items.length]);
 
-  useEffect(() => {
-    setForm(prev => ({ ...prev, shippingOptionId: 'STANDARD',
-      paymentMethod: region === 'europe' ? 'stripe' : isCI ? 'mtn_momo' : 'paystack', commune: '',
-    }));
-  }, [region, isCI]);
-
   const selectedShipping = shippingOptions.find(o => o.id === form.shippingOptionId) ?? shippingOptions[0];
+  const availableAfricaCountries = enabledCountryCodes
+    ? AFRICA_COUNTRIES.filter(country => enabledCountryCodes.includes(country.code))
+    : AFRICA_COUNTRIES;
+  const availableEuropeCountries = enabledCountryCodes
+    ? EUROPE_COUNTRIES.filter(country => enabledCountryCodes.includes(country.code))
+    : EUROPE_COUNTRIES;
   const shippingCostXof = serverQuote ? serverQuote.shippingCost : (selectedShipping?.costXof ?? 0);
   const discountAmountXof = serverQuote ? serverQuote.discountAmount : 0;
   const totalWithShipping = serverQuote ? serverQuote.totalAmount : (totalPrice + shippingCostXof);
@@ -262,6 +278,15 @@ export default function CheckoutPage() {
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
     const { name, value } = e.target;
+    if (name === 'countryCode' && value !== form.countryCode) {
+      setPaymentProvidersLoading(true);
+      setPaymentProvidersError(null);
+      setPaymentProviders([]);
+      setShippingOptions([]);
+      setForm(prev => ({ ...prev, countryCode: value, paymentMethod: '', shippingOptionId: 'STANDARD', commune: '' }));
+      if (error) setError(null);
+      return;
+    }
     setForm(prev => ({ ...prev, [name]: value }));
     if (error) setError(null);
   };
@@ -270,9 +295,7 @@ export default function CheckoutPage() {
     if (!form.firstName.trim()) return 'Le prénom est requis.';
     if (!form.lastName.trim()) return 'Le nom est requis.';
     if (!form.email.trim() || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email)) return 'Email invalide.';
-    if (isCI && MOBILE_MONEY_VALUES.has(form.paymentMethod) && !form.phone.trim()) {
-      return 'Le numéro de téléphone Mobile Money est requis.';
-    }
+    if (!form.paymentMethod || !paymentProviders.some(provider => provider.gateway === form.paymentMethod)) return 'Veuillez sélectionner un moyen de paiement disponible.';
     if (!form.street.trim()) return "L'adresse de livraison est requise.";
     if (!isCI && !form.city.trim()) return 'La ville est requise.';
     if (isCI && !form.commune) return 'Veuillez sélectionner votre commune ou ville.';
@@ -294,16 +317,11 @@ export default function CheckoutPage() {
 
     const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4002';
 
-    const countryName = [...AFRICA_COUNTRIES, ...EUROPE_COUNTRIES]
-      .find(c => c.code === form.countryCode)?.name.replace(/^..\s/, '') ?? form.countryCode;
-
     const resolvedCity = isCI && form.commune && form.commune !== 'autre_ci'
       ? 'Abidjan'
       : form.city.trim();
 
-    const gateway = MOBILE_MONEY_VALUES.has(form.paymentMethod)
-      ? form.paymentMethod  // e.g. 'mtn_momo'
-      : form.paymentMethod; // 'paystack' | 'stripe' | 'cash_on_delivery'
+    const gateway = form.paymentMethod;
 
     const payload = {
       customer: {
@@ -321,7 +339,7 @@ export default function CheckoutPage() {
       items: items.map(item => ({
         productId: item.product.id,
         quantity: item.quantity,
-        unitPrice: item.product.price,
+        ...(item.selectedColor ? { selectedVariant: { color: item.selectedColor } } : {}),
       })),
       paymentMethod: gateway,
       shippingMethod: form.shippingOptionId,
@@ -352,7 +370,7 @@ export default function CheckoutPage() {
       sessionStorage.setItem(`mm_order_access_${orderId}`, attempt.secret);
       sessionStorage.setItem(`mm_order_access_${orderRef}`, attempt.secret);
 
-      if (form.paymentMethod === 'cash_on_delivery') {
+      if (['cash_on_delivery', 'cod'].includes(form.paymentMethod.toLowerCase())) {
         sessionStorage.removeItem('mm_checkout_attempt');
         checkoutCompleted.current = true;
         clearCart();
@@ -392,9 +410,6 @@ export default function CheckoutPage() {
     );
   }
   if (items.length === 0) return null;
-
-  const selectedOperator = CI_OPERATORS.find(o => o.value === form.paymentMethod);
-  const isMobileMoney = MOBILE_MONEY_VALUES.has(form.paymentMethod);
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-orange-50/30 via-white to-orange-50/30">
@@ -464,32 +479,19 @@ export default function CheckoutPage() {
                     </div>
                   ))}
 
-                  {/* Téléphone — requis pour mobile money */}
+                  {/* Téléphone de contact pour la livraison */}
                   <div>
                     <label className="block text-sm font-semibold text-gray-700 mb-1.5">
-                      Téléphone {isMobileMoney && <span className="text-red-500">*</span>}
+                      Téléphone <span className="text-gray-400 font-normal">(optionnel)</span>
                     </label>
-                    <div className="relative">
-                      <input
-                        type="tel"
-                        name="phone"
-                        value={form.phone}
-                        onChange={handleChange}
-                        placeholder={isCI ? '+225 07 00 00 00 00' : region === 'europe' ? '+33 6 00 00 00 00' : '+221 77 000 00 00'}
-                        required={isMobileMoney}
-                        className={`w-full border-2 rounded-xl px-4 py-3 text-gray-900 placeholder-gray-400 focus:outline-none transition-colors ${
-                          isMobileMoney ? 'border-orange-300 focus:border-orange-500' : 'border-gray-200 focus:border-orange-400'
-                        }`}
-                      />
-                      {isMobileMoney && (
-                        <PhoneIcon className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-orange-400" />
-                      )}
-                    </div>
-                    {isMobileMoney && selectedOperator && (
-                      <p className="text-xs text-orange-600 mt-1 font-medium">
-                        {selectedOperator.hint} — sera utilisé pour le paiement {selectedOperator.label}
-                      </p>
-                    )}
+                    <input
+                      type="tel"
+                      name="phone"
+                      value={form.phone}
+                      onChange={handleChange}
+                      autoComplete="tel"
+                      className="w-full border-2 border-gray-200 rounded-xl px-4 py-3 text-gray-900 focus:outline-none focus:border-orange-400 transition-colors"
+                    />
                   </div>
                 </div>
               </div>
@@ -516,12 +518,12 @@ export default function CheckoutPage() {
                       className="w-full border-2 border-gray-200 rounded-xl px-4 py-3 text-gray-900 focus:outline-none focus:border-orange-400 transition-colors bg-white"
                     >
                       <optgroup label="🌍 Afrique">
-                        {AFRICA_COUNTRIES.map(c => (
+                        {availableAfricaCountries.map(c => (
                           <option key={c.code} value={c.code}>{c.name}</option>
                         ))}
                       </optgroup>
                       <optgroup label="🇪🇺 Europe">
-                        {EUROPE_COUNTRIES.map(c => (
+                        {availableEuropeCountries.map(c => (
                           <option key={c.code} value={c.code}>{c.name}</option>
                         ))}
                       </optgroup>
@@ -675,100 +677,21 @@ export default function CheckoutPage() {
                   </div>
                 </div>
 
-                {/* Opérateurs CI */}
-                {isCI ? (
-                  <div className="space-y-4">
-                    {/* Grille 2×2 opérateurs Mobile Money */}
-                    <div className="grid grid-cols-2 gap-3">
-                      {CI_OPERATORS.map(op => {
-                        const isSelected = form.paymentMethod === op.value;
-                        return (
-                          <label
-                            key={op.value}
-                            className={`flex flex-col items-center gap-2 p-4 rounded-xl border-2 cursor-pointer transition-all ${
-                              isSelected
-                                ? `${op.selectedBorder} ${op.selectedBg}`
-                                : 'border-gray-200 hover:border-orange-300'
-                            }`}
-                          >
-                            <input
-                              type="radio"
-                              name="paymentMethod"
-                              value={op.value}
-                              checked={isSelected}
-                              onChange={handleChange}
-                              className="sr-only"
-                            />
-                            {/* Badge opérateur */}
-                            <div className={`w-12 h-12 rounded-full ${op.bg} flex items-center justify-center font-bold text-sm ${op.textBadge} shadow-md`}>
-                              {op.badge}
-                            </div>
-                            <span className={`text-sm font-semibold text-center ${isSelected ? 'text-gray-900' : 'text-gray-700'}`}>
-                              {op.label}
-                            </span>
-                            {isSelected && <CheckCircleIcon className="w-4 h-4 text-green-500" />}
-                          </label>
-                        );
-                      })}
-                    </div>
-
-                    {/* Paiement à la livraison */}
-                    <label className={`flex items-center gap-4 p-4 rounded-xl border-2 cursor-pointer transition-all ${
-                      form.paymentMethod === 'cash_on_delivery'
-                        ? 'border-gray-400 bg-gray-50'
-                        : 'border-gray-200 hover:border-gray-400'
-                    }`}>
-                      <input
-                        type="radio"
-                        name="paymentMethod"
-                        value="cash_on_delivery"
-                        checked={form.paymentMethod === 'cash_on_delivery'}
-                        onChange={handleChange}
-                        className="accent-gray-600"
-                      />
-                      <span className="text-2xl">💵</span>
-                      <div className="flex-1">
-                        <p className="font-semibold text-gray-800">Paiement à la livraison</p>
-                        <p className="text-xs text-gray-500">Payez en espèces à la réception de votre colis</p>
-                      </div>
-                      {form.paymentMethod === 'cash_on_delivery' && <CheckCircleIcon className="w-5 h-5 text-gray-500 flex-shrink-0" />}
-                    </label>
-
-                    {/* Info mobile money */}
-                    {isMobileMoney && (
-                      <div className="p-3 bg-green-50 border border-green-200 rounded-xl text-sm text-green-800">
-                        📲 Votre numéro sera pré-rempli dans le formulaire de paiement sécurisé.
-                        Vous pourrez valider via votre application ou composer le code USSD.
-                      </div>
-                    )}
-
-                    {/* Contact WhatsApp */}
-                    <div className="mt-2 p-3 bg-orange-50 border border-orange-200 rounded-xl">
-                      <p className="text-xs text-orange-700">
-                        Besoin d'aide ? Contactez-nous sur{' '}
-                        <a
-                          href="https://wa.me/2250700000000"
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="font-bold underline"
-                        >
-                          WhatsApp
-                        </a>{' '}
-                        ou appelez le{' '}
-                        <a href="tel:+2250700000000" className="font-bold">
-                          +225 07 00 00 00 00
-                        </a>
-                      </p>
-                    </div>
+                {paymentProvidersLoading ? (
+                  <div role="status" className="p-4 rounded-xl bg-gray-50 text-sm text-gray-600">
+                    Chargement des moyens de paiement…
+                  </div>
+                ) : paymentProvidersError ? (
+                  <div role="alert" className="p-4 rounded-xl bg-red-50 border border-red-200 text-sm text-red-700">
+                    {paymentProvidersError}
                   </div>
                 ) : (
-                  // Autres régions : affichage standard
                   <div className="space-y-3">
-                    {(region === 'europe' ? EUROPE_PAYMENT : AFRICA_PAYMENT).map(method => {
-                      const isSelected = form.paymentMethod === method.value;
+                    {paymentProviders.map(provider => {
+                      const isSelected = form.paymentMethod === provider.gateway;
                       return (
                         <label
-                          key={method.value}
+                          key={provider.gateway}
                           className={`flex items-start gap-4 p-4 rounded-xl border-2 cursor-pointer transition-all ${
                             isSelected ? 'border-orange-500 bg-orange-50' : 'border-gray-200 hover:border-orange-300'
                           }`}
@@ -776,33 +699,23 @@ export default function CheckoutPage() {
                           <input
                             type="radio"
                             name="paymentMethod"
-                            value={method.value}
+                            value={provider.gateway}
                             checked={isSelected}
                             onChange={handleChange}
                             className="mt-1 accent-orange-500"
                           />
                           <div className="flex-1">
-                            <p className={`font-semibold flex items-center gap-2 ${isSelected ? 'text-orange-700' : 'text-gray-800'}`}>
-                              <span>{method.emoji}</span>
-                              {method.label}
+                            <p className={`font-semibold ${isSelected ? 'text-orange-700' : 'text-gray-800'}`}>
+                              {provider.label}
                             </p>
-                            <p className="text-sm text-gray-500 mt-0.5">{method.description}</p>
+                            {provider.methods.length > 0 && (
+                              <p className="text-sm text-gray-500 mt-1">{provider.methods.map(formatPaymentMethod).join(' · ')}</p>
+                            )}
                           </div>
                           {isSelected && <CheckCircleIcon className="w-5 h-5 text-orange-500 flex-shrink-0 mt-0.5" />}
                         </label>
                       );
                     })}
-
-                    {region === 'africa' && form.paymentMethod === 'paystack' && (
-                      <div className="mt-2 p-3 bg-green-50 border border-green-200 rounded-xl text-sm text-green-700">
-                        📱 Vous serez redirigé vers Paystack pour choisir votre opérateur : <strong>MTN MoMo, Orange Money, Wave, Moov</strong> ou carte bancaire.
-                      </div>
-                    )}
-                    {region === 'europe' && form.paymentMethod === 'stripe' && (
-                      <div className="mt-2 p-3 bg-blue-50 border border-blue-200 rounded-xl text-sm text-blue-700">
-                        💳 Paiement sécurisé via Stripe. Cartes Visa, Mastercard, American Express et virement SEPA acceptés. Montant débité en <strong>euros (€)</strong>.
-                      </div>
-                    )}
                   </div>
                 )}
               </div>
@@ -881,7 +794,9 @@ export default function CheckoutPage() {
                         type="button"
                         onClick={() => {
                           setAppliedPromo(null);
+                          setPromoInput('');
                           setPromoMessage(null);
+                          sessionStorage.removeItem('mm_pending_promo');
                         }}
                         className="text-xs text-red-600 hover:text-red-800 font-semibold ml-2"
                       >
@@ -901,7 +816,10 @@ export default function CheckoutPage() {
                         type="button"
                         onClick={() => {
                           if (promoInput.trim()) {
-                            setAppliedPromo(promoInput.trim().toUpperCase());
+                            const normalizedPromo = promoInput.trim().toUpperCase();
+                            setPromoMessage(null);
+                            setAppliedPromo(normalizedPromo);
+                            sessionStorage.setItem('mm_pending_promo', normalizedPromo);
                           }
                         }}
                         className="px-3 py-2 bg-gray-100 hover:bg-gray-200 text-gray-800 text-xs font-semibold rounded-xl transition"
@@ -960,7 +878,7 @@ export default function CheckoutPage() {
                 {/* Bouton confirmer */}
                 <button
                   type="submit"
-                  disabled={isSubmitting || isQuoteLoading || !serverQuote || acceptedQuoteKey !== quoteKey || !!quoteError}
+                  disabled={isSubmitting || isQuoteLoading || paymentProvidersLoading || !form.paymentMethod || !serverQuote || acceptedQuoteKey !== quoteKey || !!quoteError || !!paymentProvidersError}
                   className="mt-6 w-full py-4 px-6 bg-gradient-to-r from-orange-500 to-orange-600 text-white rounded-xl font-bold text-lg hover:from-orange-600 hover:to-orange-700 shadow-lg transition-all flex items-center justify-center gap-2 disabled:opacity-60 disabled:cursor-not-allowed"
                 >
                   {isSubmitting ? (

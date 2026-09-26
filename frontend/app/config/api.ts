@@ -94,6 +94,14 @@ class ApiService {
     });
   }
 
+  async patch(endpoint: string, data?: any, options?: RequestInit) {
+    return this.request(endpoint, {
+      ...options,
+      method: 'PATCH',
+      body: data ? JSON.stringify(data) : undefined,
+    });
+  }
+
   async delete(endpoint: string, options?: RequestInit) {
     const url = `${this.baseURL}${endpoint}`;
     
@@ -175,6 +183,49 @@ class ApiService {
 }
 
 export const apiService = new ApiService();
+
+export type SupportTicketStatus = 'OPEN' | 'IN_PROGRESS' | 'WAITING_CUSTOMER' | 'RESOLVED' | 'CLOSED';
+export type SupportTicketPriority = 'LOW' | 'NORMAL' | 'HIGH' | 'URGENT';
+
+export class SupportService {
+  static async getStats() {
+    return apiService.get('/api/support/stats');
+  }
+
+  static async getTickets(params: {
+    page?: number;
+    limit?: number;
+    status?: SupportTicketStatus | '';
+    priority?: SupportTicketPriority | '';
+    search?: string;
+    assignedTo?: 'me' | 'unassigned' | string | '';
+  } = {}) {
+    const query = new URLSearchParams();
+    if (params.page) query.set('page', String(params.page));
+    if (params.limit) query.set('limit', String(params.limit));
+    if (params.status) query.set('status', params.status);
+    if (params.priority) query.set('priority', params.priority);
+    if (params.search) query.set('search', params.search);
+    if (params.assignedTo) query.set('assignedTo', params.assignedTo);
+    return apiService.get(`/api/support/tickets?${query.toString()}`);
+  }
+
+  static async getTicket(id: string) {
+    return apiService.get(`/api/support/tickets/${id}`);
+  }
+
+  static async addMessage(id: string, message: string, internal = false) {
+    return apiService.post(`/api/support/tickets/${id}/replies`, { message, internal });
+  }
+
+  static async updateTicket(id: string, data: {
+    status?: SupportTicketStatus;
+    priority?: SupportTicketPriority;
+    assignedToId?: string | null;
+  }) {
+    return apiService.patch(`/api/support/tickets/${id}`, data);
+  }
+}
 
 // Services spécialisés avec fallback automatique
 export class ProductService {
@@ -468,11 +519,11 @@ export class SellerService {
   }
 
   static async markNotificationRead(id: string) {
-    return apiService.put(`/api/sellers/me/notifications/${id}/read`);
+    return apiService.patch(`/api/sellers/me/notifications/${id}/read`);
   }
 
   static async markAllNotificationsRead() {
-    return apiService.post('/api/sellers/me/notifications/read-all');
+    return apiService.patch('/api/sellers/me/notifications/read-all');
   }
 
   static async getMySupportTickets() {
@@ -511,11 +562,19 @@ export class SellerService {
     return apiService.put('/api/sellers/me/settings', data);
   }
 
+  static async getMyNotificationPreferences() {
+    return apiService.get('/api/sellers/me/notification-preferences');
+  }
+
+  static async updateMyNotificationPreferences(preferences: Record<string, boolean>) {
+    return apiService.put('/api/sellers/me/notification-preferences', preferences);
+  }
+
   static async getMyTeam() {
     return apiService.get('/api/sellers/me/team');
   }
 
-  static async inviteTeamMember(email: string, role: string) {
+  static async inviteTeamMember(email: string, role: 'manager' | 'catalog' | 'orders' | 'finance') {
     return apiService.post('/api/sellers/me/team/invite', { email, role });
   }
 
@@ -899,5 +958,3 @@ export class ContactService {
 }
 
 export default apiService;
-
-

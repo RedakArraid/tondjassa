@@ -11,10 +11,12 @@ import {
   SellerActionButton,
   SellerCard,
 } from '../../_components/ui';
+import { useSellerAccess } from '../../_components/access';
 
 const STEPS = ['Informations', 'Images & Galerie', 'Prix', 'Stock & Variantes', 'Logistique'];
 
 function ProductFormContent() {
+  const { can } = useSellerAccess();
   const router = useRouter();
   const searchParams = useSearchParams();
   const editId = searchParams?.get('id');
@@ -134,6 +136,7 @@ function ProductFormContent() {
     }
   };
 
+  if (!can('catalog.write')) return <SellerCard><div role="alert" className="py-12 text-center"><p className="font-semibold text-brand-navy">Accès en lecture seule</p><p className="mt-2 text-sm text-gray-500">Votre rôle ne permet pas de créer ou modifier un produit.</p><SellerActionButton href="/vendeur/dashboard/produits" variant="secondary">Retour au catalogue</SellerActionButton></div></SellerCard>;
   if (loading) return <div className="flex justify-center py-20"><Spinner size="lg" /></div>;
 
   return (

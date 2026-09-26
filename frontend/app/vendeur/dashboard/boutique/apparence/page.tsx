@@ -5,8 +5,11 @@ import Link from 'next/link';
 import { SellerService } from '../../../../config/api';
 import { Spinner } from '../../_components/sections';
 import { SellerPageHeader, SellerCard } from '../../_components/ui';
+import { useSellerAccess } from '../../_components/access';
 
 export default function ApparencePage() {
+  const { can } = useSellerAccess();
+  const canWrite = can('settings.write');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [storeName, setStoreName] = useState('');
@@ -66,7 +69,7 @@ export default function ApparencePage() {
         action={
           <div className="flex items-center gap-2">
             <Link
-              href={slug ? `/boutiques/${slug}` : '/boutiques'}
+              href={slug ? `/vendeur/${slug}` : '/vendeur'}
               target="_blank"
               className="px-4 py-2 text-xs font-semibold rounded-lg bg-white border border-gray-200 text-gray-700 hover:bg-gray-50 shadow-sm transition"
             >
@@ -86,6 +89,7 @@ export default function ApparencePage() {
       )}
 
       <form onSubmit={handleSave} className="space-y-6">
+        <fieldset disabled={!canWrite} className="space-y-6 disabled:opacity-75">
         <SellerCard title="Identité visuelle">
           <div className="space-y-4 max-w-2xl">
             <div>
@@ -145,7 +149,7 @@ export default function ApparencePage() {
           </div>
         </SellerCard>
 
-        <div className="flex justify-end">
+        {canWrite && <div className="flex justify-end">
           <button
             type="submit"
             disabled={saving}
@@ -153,7 +157,8 @@ export default function ApparencePage() {
           >
             {saving ? 'Enregistrement...' : 'Enregistrer les modifications'}
           </button>
-        </div>
+        </div>}
+        </fieldset>
       </form>
     </div>
   );

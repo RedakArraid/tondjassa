@@ -11,6 +11,7 @@ import {
 } from '../../_components/ui';
 import { SellerService } from '../../../../config/api';
 import { Spinner } from '../../_components/sections';
+import { useSellerAccess } from '../../_components/access';
 
 export type CouponTypeId =
   | 'PERCENTAGE'
@@ -95,6 +96,8 @@ function emptyForm(type: CouponTypeId = 'PERCENTAGE') {
 }
 
 export default function CouponsPage() {
+  const { can } = useSellerAccess();
+  const canWrite = can('catalog.write');
   const [coupons, setCoupons] = useState<Coupon[]>([]);
   const [loading, setLoading] = useState(true);
   const [show, setShow] = useState(false);
@@ -268,14 +271,14 @@ export default function CouponsPage() {
       <SellerPageHeader
         title="Coupons"
         description="Créez des réductions financées par votre boutique, limitées à vos propres articles."
-        action={
+        action={canWrite ? (
           <SellerActionButton variant="primary" onClick={() => openCreate()}>
             + Créer un coupon
           </SellerActionButton>
-        }
+        ) : undefined}
       />
 
-      <SellerCard title="Types de coupons">
+      {canWrite && <SellerCard title="Types de coupons">
         <div className="grid sm:grid-cols-2 xl:grid-cols-4 gap-3">
           {COUPON_TYPES.map((t) => (
             <button
@@ -290,9 +293,9 @@ export default function CouponsPage() {
             </button>
           ))}
         </div>
-      </SellerCard>
+      </SellerCard>}
 
-      {show && (
+      {canWrite && show && (
         <SellerCard
           title={editingId ? 'Modifier le coupon' : 'Nouveau coupon'}
           action={
@@ -511,14 +514,14 @@ export default function CouponsPage() {
                       {c.categoryName ? ` · Catégorie : ${c.categoryName}` : ''}
                     </p>
                   </div>
-                  <RowActions>
+                  {canWrite && <RowActions>
                     <SellerActionButton size="sm" variant="outline" onClick={() => duplicate(c)}>
                       Dupliquer
                     </SellerActionButton>
                     <SellerActionButton size="sm" variant="danger" onClick={() => remove(c.id)}>
                       Désactiver
                     </SellerActionButton>
-                  </RowActions>
+                  </RowActions>}
                 </div>
               );
             })}

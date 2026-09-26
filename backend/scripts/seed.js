@@ -10,6 +10,9 @@ const db = new PrismaClient();
 
 async function main() {
   console.log('🌱 Démarrage du seed de la base de données MandeMarket...\n');
+  // Les comptes documentés de démonstration doivent être immédiatement
+  // utilisables. La vérification reste obligatoire pour toute inscription réelle.
+  const seedVerifiedAt = new Date();
 
   // ===== CATÉGORIES =====
   console.log('📁 Création des catégories...');
@@ -307,12 +310,14 @@ async function main() {
       password: adminHash,
       name: 'Administrateur MandeMarket',
       role: 'admin',
+      emailVerifiedAt: seedVerifiedAt,
     },
     create: {
       email: adminEmail,
       password: adminHash,
       name: 'Administrateur MandeMarket',
-      role: 'admin'
+      role: 'admin',
+      emailVerifiedAt: seedVerifiedAt,
     }
   });
   console.log(`  ✅ Admin: ${adminUser.email}`);
@@ -327,15 +332,41 @@ async function main() {
       role: 'manager',
       password: managerHash,
       name: 'Manager MandeMarket',
+      emailVerifiedAt: seedVerifiedAt,
     },
     create: {
       email: 'manager@mandemarket.com',
       password: managerHash,
       name: 'Manager MandeMarket',
-      role: 'manager'
+      role: 'manager',
+      emailVerifiedAt: seedVerifiedAt,
     }
   });
   console.log(`  ✅ Manager: ${managerUser.email} (role=manager)`);
+
+  // ===== UTILISATEUR SUPPORT =====
+  console.log('\n🎧 Création du compte support...');
+
+  const supportEmail = process.env.SEED_SUPPORT_EMAIL || 'support@mandemarket.com';
+  const supportPassword = process.env.SEED_SUPPORT_PASSWORD || 'Support@2024!';
+  const supportHash = await bcrypt.hash(supportPassword, 12);
+  const supportUser = await db.user.upsert({
+    where: { email: supportEmail },
+    update: {
+      role: 'support',
+      password: supportHash,
+      name: 'Support MandeMarket',
+      emailVerifiedAt: seedVerifiedAt,
+    },
+    create: {
+      email: supportEmail,
+      password: supportHash,
+      name: 'Support MandeMarket',
+      role: 'support',
+      emailVerifiedAt: seedVerifiedAt,
+    }
+  });
+  console.log(`  ✅ Support: ${supportUser.email} (role=support)`);
 
   // ===== VENDEUR =====
   console.log('\n🏪 Création du vendeur...');
@@ -347,12 +378,14 @@ async function main() {
       password: sellerHash,
       name: 'Aminata Koné',
       role: 'seller',
+      emailVerifiedAt: seedVerifiedAt,
     },
     create: {
       email: 'vendeur@mandemarket.com',
       password: sellerHash,
       name: 'Aminata Koné',
-      role: 'seller'
+      role: 'seller',
+      emailVerifiedAt: seedVerifiedAt,
     }
   });
 
@@ -547,84 +580,102 @@ async function main() {
 
   const clientCiEmail = 'client@mandemarket.com';
   const clientCiPassword = 'Client@2024!';
-  const clientCiExists = await db.customer.findUnique({ where: { email: clientCiEmail } });
-
-  if (!clientCiExists) {
-    const clientCiHash = await bcrypt.hash(clientCiPassword, 12);
-    // User record (requis pour l'authentification)
-    await db.user.upsert({
-      where: { email: clientCiEmail },
-      update: {},
-      create: {
-        email: clientCiEmail,
-        password: clientCiHash,
-        name: 'Fatoumata Diallo',
-        role: 'customer'
-      }
-    });
-    // Customer record (profil client)
-    const customer = await db.customer.create({
-      data: {
-        email: clientCiEmail,
-        firstName: 'Fatoumata',
-        lastName: 'Diallo',
-        phone: '+2250102030405',
-        status: 'active',
-        address: {
-          create: {
-            street: '12 Rue du Commerce, Plateau',
-            city: 'Abidjan',
-            postalCode: '01 BP 1234',
-            country: 'CI',
-            isDefault: true
-          }
+  const clientCiHash = await bcrypt.hash(clientCiPassword, 12);
+  const clientCiUser = await db.user.upsert({
+    where: { email: clientCiEmail },
+    update: {
+      password: clientCiHash,
+      name: 'Fatoumata Diallo',
+      role: 'customer',
+      emailVerifiedAt: seedVerifiedAt,
+    },
+    create: {
+      email: clientCiEmail,
+      password: clientCiHash,
+      name: 'Fatoumata Diallo',
+      role: 'customer',
+      emailVerifiedAt: seedVerifiedAt,
+    }
+  });
+  // Ce lien est requis par requireCustomerAuth et doit aussi être réparé
+  // lors d'un nouveau seed sur une base déjà initialisée.
+  const customer = await db.customer.upsert({
+    where: { email: clientCiEmail },
+    update: {
+      userId: clientCiUser.id,
+      firstName: 'Fatoumata',
+      lastName: 'Diallo',
+      phone: '+2250102030405',
+      status: 'active',
+    },
+    create: {
+      userId: clientCiUser.id,
+      email: clientCiEmail,
+      firstName: 'Fatoumata',
+      lastName: 'Diallo',
+      phone: '+2250102030405',
+      status: 'active',
+      address: {
+        create: {
+          street: '12 Rue du Commerce, Plateau',
+          city: 'Abidjan',
+          postalCode: '01 BP 1234',
+          country: 'CI',
+          isDefault: true
         }
       }
-    });
-    console.log(`  ✅ Client CI: ${customer.email} (${customer.firstName} ${customer.lastName})`);
-  } else {
-    console.log(`  ℹ️  Client CI déjà existant: ${clientCiExists.email}`);
-  }
+    }
+  });
+  console.log(`  ✅ Client CI: ${customer.email} (${customer.firstName} ${customer.lastName})`);
 
   // ===== CLIENT EUROPE (FR) =====
   const clientFrEmail = 'client.fr@mandemarket.com';
   const clientFrPassword = 'ClientFR@2024!';
-  const clientFrExists = await db.customer.findUnique({ where: { email: clientFrEmail } });
-
-  if (!clientFrExists) {
-    const clientFrHash = await bcrypt.hash(clientFrPassword, 12);
-    await db.user.upsert({
-      where: { email: clientFrEmail },
-      update: {},
-      create: {
-        email: clientFrEmail,
-        password: clientFrHash,
-        name: 'Sophie Martin',
-        role: 'customer'
-      }
-    });
-    const customerFr = await db.customer.create({
-      data: {
-        email: clientFrEmail,
-        firstName: 'Sophie',
-        lastName: 'Martin',
-        phone: '+33612345678',
-        status: 'active',
-        address: {
-          create: {
-            street: '42 Avenue des Champs-Élysées',
-            city: 'Paris',
-            postalCode: '75008',
-            country: 'FR',
-            isDefault: true
-          }
+  const clientFrHash = await bcrypt.hash(clientFrPassword, 12);
+  const clientFrUser = await db.user.upsert({
+    where: { email: clientFrEmail },
+    update: {
+      password: clientFrHash,
+      name: 'Sophie Martin',
+      role: 'customer',
+      emailVerifiedAt: seedVerifiedAt,
+    },
+    create: {
+      email: clientFrEmail,
+      password: clientFrHash,
+      name: 'Sophie Martin',
+      role: 'customer',
+      emailVerifiedAt: seedVerifiedAt,
+    }
+  });
+  const customerFr = await db.customer.upsert({
+    where: { email: clientFrEmail },
+    update: {
+      userId: clientFrUser.id,
+      firstName: 'Sophie',
+      lastName: 'Martin',
+      phone: '+33612345678',
+      status: 'active',
+    },
+    create: {
+      userId: clientFrUser.id,
+      email: clientFrEmail,
+      firstName: 'Sophie',
+      lastName: 'Martin',
+      phone: '+33612345678',
+      status: 'active',
+      address: {
+        create: {
+          street: '42 Avenue des Champs-Élysées',
+          city: 'Paris',
+          postalCode: '75008',
+          country: 'FR',
+          isDefault: true
         }
       }
-    });
-    console.log(`  ✅ Client FR: ${customerFr.email} (${customerFr.firstName} ${customerFr.lastName})`);
-  } else {
-    console.log(`  ℹ️  Client FR déjà existant: ${clientFrExists.email}`);
-  }
+    }
+  });
+  console.log(`  ✅ Client FR: ${customerFr.email} (${customerFr.firstName} ${customerFr.lastName})`);
 
   // ===== RÉSUMÉ =====
   const totalProducts = await db.product.count();
@@ -636,11 +687,12 @@ async function main() {
   console.log('📊 RÉSUMÉ:');
   console.log(`  Catégories : 8 racines + 13 sous-catégories`);
   console.log(`  Produits   : ${totalProducts} (plateforme + vendeur)`);
-  console.log(`  Utilisateurs : ${totalUsers} (admin + manager + vendeur)`);
+  console.log(`  Utilisateurs : ${totalUsers} (admin + manager + support + vendeur + clients)`);
   console.log(`  Clients    : ${totalCustomers} (Afrique + Europe)`);
   console.log('═══════════════════════════════════════');
   console.log('🔑 ACCÈS ADMIN   : admin@mandemarket.com / Admin@2024!');
   console.log('🔑 ACCÈS MANAGER : manager@mandemarket.com / Manager@2024!');
+  console.log(`🔑 ACCÈS SUPPORT : ${supportEmail} / ${supportPassword}`);
   console.log('🔑 ACCÈS VENDEUR : vendeur@mandemarket.com / Vendeur@2024!');
   console.log('🔑 CLIENT CI     : client@mandemarket.com / Client@2024!');
   console.log('🔑 CLIENT FR     : client.fr@mandemarket.com / ClientFR@2024!');

@@ -36,9 +36,11 @@ export default function AdminLogin() {
         sessionStorage.setItem('admin_token', data.token);
         sessionStorage.setItem('admin_user', JSON.stringify(data.user));
         
-        // Vendeur approuvé → dashboard vendeur, sinon admin
+        // Rediriger vers le portail correspondant au rôle authentifié.
         if (data.user?.role === 'seller') {
           router.push('/vendeur/dashboard');
+        } else if (data.user?.role === 'support') {
+          router.push('/support/dashboard');
         } else {
           router.push('/admin/dashboard');
         }
@@ -62,8 +64,8 @@ export default function AdminLogin() {
             <LockClosedIcon className="w-8 h-8 text-white" />
           </div>
           <h1 className="text-3xl font-bold text-gray-900 mb-2">MandeMarket</h1>
-          <p className="text-orange-600 font-medium text-lg">Administration & Vendeurs</p>
-          <p className="text-gray-500 mt-2">Connectez-vous selon votre compte (admin ou vendeur)</p>
+          <p className="text-orange-600 font-medium text-lg">Administration, Support & Vendeurs</p>
+          <p className="text-gray-500 mt-2">Connectez-vous selon votre compte professionnel</p>
         </div>
 
         {/* Formulaire de connexion */}
@@ -125,6 +127,8 @@ export default function AdminLogin() {
                 <button
                   type="button"
                   onClick={() => setShowPassword(!showPassword)}
+                  aria-label={showPassword ? 'Masquer le mot de passe' : 'Afficher le mot de passe'}
+                  aria-pressed={showPassword}
                   className="absolute inset-y-0 right-0 pr-3 flex items-center"
                   disabled={isLoading}
                 >

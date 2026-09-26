@@ -42,17 +42,18 @@ Voir aussi [CLOUDINARY_GUIDE.md](./CLOUDINARY_GUIDE.md) pour les clés médias.
 
 ## Lancer avec Docker (recommandé)
 
-Expose notamment : frontend **3000**, API **4002**, PostgreSQL **5433** → 5432 dans le conteneur, Redis **6380** → 6379, Adminer **8080**.
+Expose notamment : frontend **3000**, API **4002**, PostgreSQL **5433** → 5432 dans le conteneur, Redis **6380** → 6379, boîte email locale Mailpit **8025**, Adminer **8080**. Le backend applique automatiquement les migrations avec `prisma migrate deploy`; le worker traite ensuite l'outbox d'e-mails et les tâches différées.
 
 ```bash
 docker compose up -d --build
-# Migrations (si besoin, une fois le backend prêt)
+# Contrôle explicite de l'état des migrations (facultatif)
 npm run docker:migrate
 ```
 
 - Site : http://localhost:3000  
 - API : http://localhost:4002  
 - Santé API : http://localhost:4002/health  
+- Emails de développement : http://localhost:8025
 - Adminer : http://localhost:8080  
 
 Scripts racine utiles : `npm run docker:logs`, `npm run docker:down`, `npm run db:studio` (Prisma Studio hors conteneur, avec `DATABASE_URL` adapté).
@@ -82,7 +83,7 @@ npm run dev
 mandemarket/
 ├── frontend/          # Next.js 14 — app/, composants, contextes
 ├── backend/           # Express — src/routes.*.js, Prisma, scripts/
-├── docker-compose.yml # Stack locale (postgres, redis, backend, frontend, adminer)
+├── docker-compose.yml # Stack locale (postgres, redis, mailpit, backend, worker, frontend, adminer)
 ├── docker-compose.prod.yml  # Déploiement (Traefik, etc.) — voir skill infra
 ├── package.json       # Scripts orchestration (dev, docker, db, lint, test)
 ├── backend/.env.docker.example

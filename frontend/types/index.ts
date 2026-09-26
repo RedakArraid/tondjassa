@@ -149,7 +149,7 @@ export interface Payment {
   orderId: string;
   order?: Order;
   amount: number; // En centimes
-  method: PaymentMethod;
+  method: string;
   status: PaymentStatus;
   transactionId?: string;
   gateway?: string;
@@ -251,13 +251,6 @@ export enum OrderStatus {
   DELIVERED = 'DELIVERED',
   CANCELLED = 'CANCELLED',
   REFUNDED = 'REFUNDED'
-}
-
-export enum PaymentMethod {
-  CARD = 'CARD',
-  PAYPAL = 'PAYPAL',
-  BANK_TRANSFER = 'BANK_TRANSFER',
-  CASH_ON_DELIVERY = 'CASH_ON_DELIVERY'
 }
 
 export enum PaymentStatus {

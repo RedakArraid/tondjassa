@@ -10,8 +10,11 @@ import {
   SellerEmptyState,
   RowActions,
 } from '../../_components/ui';
+import { useSellerAccess } from '../../_components/access';
 
 export default function BrouillonsPage() {
+  const { can } = useSellerAccess();
+  const canWrite = can('catalog.write');
   const [loading, setLoading] = useState(true);
   const [products, setProducts] = useState<any[]>([]);
 
@@ -96,7 +99,7 @@ export default function BrouillonsPage() {
                     Modifié le {new Date(p.updatedAt).toLocaleDateString('fr-FR')} · SKU : {p.sku || 'N/A'} · Prix : {(p.price / 100).toLocaleString('fr-FR')} FCFA
                   </p>
                 </div>
-                <RowActions>
+                {canWrite && <RowActions>
                   <SellerActionButton
                     size="sm"
                     variant="primary"
@@ -125,7 +128,7 @@ export default function BrouillonsPage() {
                   >
                     Supprimer
                   </SellerActionButton>
-                </RowActions>
+                </RowActions>}
               </div>
             ))}
           </div>

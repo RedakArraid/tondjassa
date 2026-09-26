@@ -8,6 +8,7 @@ import PublicHeader from '../components/PublicHeader';
 import PublicFooter from '../components/PublicFooter';
 import ProductFiltersAmazon from '../components/ProductFiltersAmazon';
 import { ProductService } from '../config/api';
+import { useCart } from '../contexts/CartContext';
 import {
   MagnifyingGlassIcon,
   XMarkIcon,
@@ -55,6 +56,7 @@ function BoutiquePageInner() {
   const { formatPrice, t } = useRegion();
   const searchParams = useSearchParams();
   const router = useRouter();
+  const { addItem } = useCart();
 
   // Server-side filter states (trigger API calls)
   const [selectedCategory, setSelectedCategory] = useState('all');
@@ -82,11 +84,26 @@ function BoutiquePageInner() {
   const flatCategories = isHydrated ? getActiveCategories() : [];
   const categories = buildCategoryTree(flatCategories);
 
-  // Read search param from URL on mount
+  // Synchroniser les filtres avec l'URL, y compris lors d'une navigation
+  // depuis l'en-tête alors que la page boutique est déjà montée.
   useEffect(() => {
-    const s = searchParams?.get('search');
-    if (s) { setSearchQuery(s); setDebouncedSearch(s); }
-  }, []);
+    const search = searchParams?.get('search') || '';
+    setSearchQuery(search);
+    setDebouncedSearch(search);
+    setCurrentPage(1);
+  }, [searchParams]);
+
+  const categorySlug = searchParams?.get('category') || '';
+  useEffect(() => {
+    if (!isHydrated) return;
+    if (!categorySlug) {
+      setSelectedCategory('all');
+      return;
+    }
+    const matchingCategory = getActiveCategories().find((category) => category.slug === categorySlug);
+    setSelectedCategory(matchingCategory?.id || 'all');
+    setCurrentPage(1);
+  }, [categorySlug, isHydrated, getActiveCategories]);
 
   // Debounce search
   useEffect(() => {
@@ -272,8 +289,10 @@ function BoutiquePageInner() {
               />
               {searchQuery && (
                 <button
+                  type="button"
                   onClick={() => { setSearchQuery(''); setDebouncedSearch(''); }}
                   className="absolute right-3 top-1/2 -translate-y-1/2 p-1.5 hover:bg-gray-100 rounded-full transition-colors"
+                  aria-label="Effacer la recherche"
                 >
                   <XMarkIcon className="w-5 h-5 text-gray-400" />
                 </button>
@@ -474,7 +493,7 @@ function BoutiquePageInner() {
 
                   // Grid view
                   return (
-                    <Link key={product.id} href={`/boutique/${product.id}`} className="bg-white rounded-2xl shadow-lg overflow-hidden hover:shadow-2xl transition-all duration-300 group border border-gray-100 relative block">
+                    <article key={product.id} className="bg-white rounded-2xl shadow-lg overflow-hidden hover:shadow-2xl transition-all duration-300 group border border-gray-100 relative block">
                       {isNew && (
                         <div className="absolute top-4 left-4 z-10">
                           <span className="inline-flex items-center gap-1 px-3 py-1.5 bg-green-500 text-white rounded-full text-xs font-bold shadow-lg">
@@ -482,7 +501,7 @@ function BoutiquePageInner() {
                           </span>
                         </div>
                       )}
-                      <div className="relative aspect-square overflow-hidden bg-gray-100">
+                      <Link href={`/boutique/${product.id}`} className="relative block aspect-square overflow-hidden bg-gray-100">
                         <img
                           src={product.image || 'https://images.unsplash.com/photo-1584917865442-de89df76afd3?w=500&h=500&fit=crop'}
                           alt={product.name}
@@ -503,7 +522,7 @@ function BoutiquePageInner() {
                             {(product.stock || 0) > 0 ? product.stock : 'Rupture'}
                           </span>
                         </div>
-                      </div>
+                      </Link>
                       <div className="p-5">
                         <div className="flex items-center gap-2 mb-2 flex-wrap">
                           <span className="text-xs font-bold text-orange-600 uppercase tracking-wide">{category?.name}</span>
@@ -511,7 +530,9 @@ function BoutiquePageInner() {
                             <span className="text-xs text-gray-500">· {product.seller.storeName}</span>
                           )}
                         </div>
-                        <h3 className="text-lg font-bold text-gray-900 mb-2 group-hover:text-orange-600 transition-colors line-clamp-2">{product.name}</h3>
+                        <h3 className="text-lg font-bold text-gray-900 mb-2 group-hover:text-orange-600 transition-colors line-clamp-2">
+                          <Link href={`/boutique/${product.id}`}>{product.name}</Link>
+                        </h3>
                         <p className="text-sm text-gray-600 mb-4 line-clamp-2">{product.description}</p>
                         {(product.material || (Array.isArray(product.colors) && product.colors.length > 0)) && (
                           <div className="flex flex-wrap gap-2 mb-4">
@@ -527,7 +548,8 @@ function BoutiquePageInner() {
                             <div className="text-xs text-gray-500 font-medium">Prix TTC</div>
                           </div>
                           <button
-                            onClick={(e) => { e.preventDefault(); e.stopPropagation(); }}
+                            type="button"
+                            onClick={() => addItem(product, 1)}
                             className={`p-3 rounded-xl transition-all relative z-10 ${
                               (product.stock || 0) === 0
                                 ? 'bg-gray-200 text-gray-500 cursor-not-allowed'
@@ -535,12 +557,13 @@ function BoutiquePageInner() {
                             }`}
                             disabled={(product.stock || 0) === 0}
                             title={(product.stock || 0) > 0 ? 'Ajouter au panier' : 'Indisponible'}
+                            aria-label={(product.stock || 0) > 0 ? `Ajouter ${product.name} au panier` : `${product.name} indisponible`}
                           >
                             <ShoppingBagIcon className="w-6 h-6" />
                           </button>
                         </div>
                       </div>
-                    </Link>
+                    </article>
                   );
                 })}
               </div>
@@ -563,9 +586,11 @@ function BoutiquePageInner() {
             {!loadingProducts && pagination.totalPages > 1 && (
               <div className="mt-10 flex items-center justify-center gap-2">
                 <button
+                  type="button"
                   onClick={() => handlePageChange(currentPage - 1)}
                   disabled={currentPage === 1}
                   className="p-2 rounded-lg border border-gray-200 hover:bg-orange-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                  aria-label="Page précédente"
                 >
                   <ChevronLeftIcon className="w-5 h-5 text-gray-700" />
                 </button>
@@ -594,9 +619,11 @@ function BoutiquePageInner() {
                     )
                   )}
                 <button
+                  type="button"
                   onClick={() => handlePageChange(currentPage + 1)}
                   disabled={currentPage === pagination.totalPages}
                   className="p-2 rounded-lg border border-gray-200 hover:bg-orange-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                  aria-label="Page suivante"
                 >
                   <ChevronRightIcon className="w-5 h-5 text-gray-700" />
                 </button>
@@ -613,7 +640,7 @@ function BoutiquePageInner() {
             <div className="p-6">
               <div className="flex items-center justify-between mb-6 pb-4 border-b">
                 <h2 className="text-xl font-bold text-gray-900">Filtres</h2>
-                <button onClick={() => setShowMobileFilters(false)} className="p-2 hover:bg-gray-100 rounded-xl transition-colors">
+                <button type="button" onClick={() => setShowMobileFilters(false)} className="p-2 hover:bg-gray-100 rounded-xl transition-colors" aria-label="Fermer les filtres">
                   <XMarkIcon className="w-6 h-6 text-gray-600" />
                 </button>
               </div>

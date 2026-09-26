@@ -782,16 +782,20 @@ export function ProductsSection({
           <p className="text-sm text-gray-500">Page {currentPage} sur {pages}</p>
           <div className="flex gap-2">
             <button
+              type="button"
               onClick={() => onPageChange(currentPage - 1)}
               disabled={currentPage <= 1}
               className="p-2 border border-gray-300 rounded-lg disabled:opacity-40 hover:bg-gray-50 transition-colors"
+              aria-label="Page précédente des produits"
             >
               <ChevronLeftIcon className="w-4 h-4" />
             </button>
             <button
+              type="button"
               onClick={() => onPageChange(currentPage + 1)}
               disabled={currentPage >= pages}
               className="p-2 border border-gray-300 rounded-lg disabled:opacity-40 hover:bg-gray-50 transition-colors"
+              aria-label="Page suivante des produits"
             >
               <ChevronRightIcon className="w-4 h-4" />
             </button>
@@ -991,16 +995,20 @@ export function OrdersSection({
           <p className="text-sm text-gray-500">Page {currentPage} sur {pages}</p>
           <div className="flex gap-2">
             <button
+              type="button"
               onClick={() => onPageChange(currentPage - 1)}
               disabled={currentPage <= 1}
               className="p-2 border border-gray-300 rounded-lg disabled:opacity-40 hover:bg-gray-50 transition-colors"
+              aria-label="Page précédente des commandes"
             >
               <ChevronLeftIcon className="w-4 h-4" />
             </button>
             <button
+              type="button"
               onClick={() => onPageChange(currentPage + 1)}
               disabled={currentPage >= pages}
               className="p-2 border border-gray-300 rounded-lg disabled:opacity-40 hover:bg-gray-50 transition-colors"
+              aria-label="Page suivante des commandes"
             >
               <ChevronRightIcon className="w-4 h-4" />
             </button>
@@ -1714,4 +1722,3 @@ export function ProfileSection({
     </div>
   );
 }
-

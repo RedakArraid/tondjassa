@@ -47,12 +47,10 @@ class OrderService {
       bank_transfer: 'BANK_TRANSFER',
       card: 'CARD',
       stripe: 'CARD',
-      cinetpay: 'CARD',
       paystack: 'CARD',
       wave: 'CARD',
       orange_money: 'CARD',
       mtn_momo: 'CARD',
-      moov_money: 'CARD',
     };
     const normalizedMethod = payMethodMap[paymentMethod?.toLowerCase()] || 'CARD';
 
@@ -265,7 +263,7 @@ class OrderService {
             orderId, gateway: order.payment.gateway || 'manual', transactionId: order.payment.transactionId,
             amount: order.totalAmount, currency: 'XOF', reason: options.reason || 'Annulation', status: 'REQUESTED',
           }, update: {} });
-        } else if (order.payment?.status === 'PENDING') {
+        } else if (['PENDING', 'PROCESSING'].includes(order.payment?.status)) {
           await tx.payment.update({ where: { id: order.payment.id }, data: { status: 'FAILED' } });
         }
       }

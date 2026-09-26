@@ -12,7 +12,8 @@ FROM base AS runner
 ENV NODE_ENV=production PORT=4002
 RUN addgroup -S -g 1001 nodejs && adduser -S -u 1001 -G nodejs nodejs
 COPY --from=builder --chown=nodejs:nodejs /app /app
-RUN chmod +x /app/scripts/*.sh && mkdir -p /app/uploads /app/logs /app/tmp && chown -R nodejs:nodejs /app
+RUN chmod +x /app/scripts/*.sh && mkdir -p /app/uploads /app/logs /app/tmp && chown -R nodejs:nodejs /app \
+    && rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx
 USER nodejs
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 CMD wget -q --spider http://localhost:4002/health/ready || exit 1
 EXPOSE 4002
