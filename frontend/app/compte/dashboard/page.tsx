@@ -243,7 +243,7 @@ function DashboardContent() {
       });
       setPasswordSuccess(true);
       setPasswordForm({ currentPassword: '', newPassword: '', confirmPassword: '' });
-      localStorage.removeItem('mandemarket_customer_token');
+      sessionStorage.removeItem('mandemarket_customer_token');
       window.location.replace('/compte/login?passwordChanged=1');
     } catch (err) {
       setPasswordError(err instanceof Error ? err.message : 'Erreur changement de mot de passe');

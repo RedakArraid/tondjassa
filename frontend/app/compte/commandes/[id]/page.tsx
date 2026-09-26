@@ -132,7 +132,7 @@ export default function OrderDetailPage() {
   useEffect(() => {
     if (!isAuthenticated || !orderId) return;
     const fetchOrder = async () => {
-      const token = localStorage.getItem('mandemarket_customer_token');
+      const token = sessionStorage.getItem('mandemarket_customer_token');
       try {
         const res = await fetch(`${API}/api/account/orders/${orderId}`, {
           headers: { Authorization: `Bearer ${token}` },
@@ -184,7 +184,7 @@ export default function OrderDetailPage() {
     e.preventDefault();
     setCancelLoading(true);
     setCancelError('');
-    const token = localStorage.getItem('mandemarket_customer_token');
+    const token = sessionStorage.getItem('mandemarket_customer_token');
     try {
       const res = await fetch(`${API}/api/account/orders/${orderId}/cancel`, {
         method: 'POST',
@@ -210,7 +210,7 @@ export default function OrderDetailPage() {
     if (!returnReason.trim()) { setReturnError('Veuillez indiquer une raison.'); return; }
     setReturnLoading(true);
     setReturnError('');
-    const token = localStorage.getItem('mandemarket_customer_token');
+    const token = sessionStorage.getItem('mandemarket_customer_token');
     try {
       const res = await fetch(`${API}/api/account/orders/${orderId}/return-request`, {
         method: 'POST',
