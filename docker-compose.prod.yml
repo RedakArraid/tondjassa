@@ -65,8 +65,8 @@ services:
       - ALL
     pids_limit: 256
     tmpfs:
-      - /tmp:rw,noexec,nosuid,size=64m
-      - /app/tmp:rw,noexec,nosuid,size=32m
+      - /tmp:rw,noexec,nosuid,size=64m,mode=1777
+      - /app/tmp:rw,noexec,nosuid,size=32m,uid=1001,gid=1001,mode=0770
     logging:
       driver: json-file
       options:
@@ -139,8 +139,8 @@ services:
       - ALL
     pids_limit: 256
     tmpfs:
-      - /tmp:rw,noexec,nosuid,size=64m
-      - /app/.next/cache:rw,noexec,nosuid,size=64m
+      - /tmp:rw,noexec,nosuid,size=64m,mode=1777
+      - /app/.next/cache:rw,noexec,nosuid,size=64m,uid=1001,gid=1001,mode=0770
     logging:
       driver: json-file
       options:

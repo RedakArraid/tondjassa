@@ -44,10 +44,10 @@ services:
     cap_drop: ['ALL']
     pids_limit: 256
     tmpfs:
-      - /tmp:rw,noexec,nosuid,size=64m
-      - /app/tmp:rw,noexec,nosuid,size=32m
-      - /app/uploads:rw,noexec,nosuid,size=32m
-      - /app/logs:rw,noexec,nosuid,size=16m
+      - /tmp:rw,noexec,nosuid,size=64m,mode=1777
+      - /app/tmp:rw,noexec,nosuid,size=32m,uid=1001,gid=1001,mode=0770,mode=1777
+      - /app/uploads:rw,noexec,nosuid,size=32m,uid=1001,gid=1001,mode=0770
+      - /app/logs:rw,noexec,nosuid,size=16m,uid=1001,gid=1001,mode=0770
     depends_on:
       postgres: { condition: service_healthy }
       redis: { condition: service_healthy }
@@ -67,10 +67,10 @@ services:
     cap_drop: ['ALL']
     pids_limit: 128
     tmpfs:
-      - /tmp:rw,noexec,nosuid,size=32m
-      - /app/tmp:rw,noexec,nosuid,size=32m
-      - /app/uploads:rw,noexec,nosuid,size=16m
-      - /app/logs:rw,noexec,nosuid,size=16m
+      - /tmp:rw,noexec,nosuid,size=32m,mode=1777
+      - /app/tmp:rw,noexec,nosuid,size=32m,uid=1001,gid=1001,mode=0770,mode=1777
+      - /app/uploads:rw,noexec,nosuid,size=16m,uid=1001,gid=1001,mode=0770
+      - /app/logs:rw,noexec,nosuid,size=16m,uid=1001,gid=1001,mode=0770
     depends_on:
       backend: { condition: service_healthy }
     healthcheck:
@@ -90,8 +90,8 @@ services:
     cap_drop: ['ALL']
     pids_limit: 256
     tmpfs:
-      - /tmp:rw,noexec,nosuid,size=64m
-      - /app/.next/cache:rw,noexec,nosuid,size=64m
+      - /tmp:rw,noexec,nosuid,size=64m,mode=1777
+      - /app/.next/cache:rw,noexec,nosuid,size=64m,uid=1001,gid=1001,mode=0770
     depends_on:
       backend: { condition: service_healthy }
     healthcheck:
