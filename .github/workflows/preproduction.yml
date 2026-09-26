@@ -35,7 +35,7 @@ jobs:
           openssl req -x509 -newkey rsa:2048 -nodes -days 2 -keyout "$RUNNER_TEMP/qa-certs/key.pem" -out "$RUNNER_TEMP/qa-certs/cert.pem" -subj /CN=localhost -addext 'subjectAltName=DNS:localhost,DNS:mailpit,IP:127.0.0.1' -addext 'basicConstraints=critical,CA:TRUE'
           chmod 755 "$RUNNER_TEMP/qa-certs"
           chmod 644 "$RUNNER_TEMP/qa-certs/"*.pem
-          printf 'CI_JWT_SECRET=%s\nE2E_PASSWORD=%s\nQA_CERTS_DIR=%s\n' "$(openssl rand -hex 32)" "$(openssl rand -hex 24)" "$RUNNER_TEMP/qa-certs" > "$RUNNER_TEMP/browser.env"
+          printf 'CI_JWT_SECRET=%s\nCI_METRICS_TOKEN=%s\nE2E_PASSWORD=%s\nQA_CERTS_DIR=%s\n' "$(openssl rand -hex 32)" "$(openssl rand -hex 32)" "$(openssl rand -hex 24)" "$RUNNER_TEMP/qa-certs" > "$RUNNER_TEMP/browser.env"
           chmod 600 "$RUNNER_TEMP/browser.env"
           docker compose --env-file "$RUNNER_TEMP/browser.env" -f .github/compose.smoke.yml -f .github/compose.browser.yml up -d --wait --wait-timeout 180
           curl --retry 10 --retry-connrefused --retry-delay 1 --fail --cacert "$RUNNER_TEMP/qa-certs/cert.pem" https://localhost:3443/ -o /dev/null

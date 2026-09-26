@@ -26,6 +26,7 @@ services:
       DATABASE_URL: postgresql://postgres:ci-only-password@postgres:5432/tondjassa_smoke_test
       REDIS_URL: redis://:ci-only-password@redis:6379
       JWT_SECRET: ${CI_JWT_SECRET:?CI_JWT_SECRET required}
+      METRICS_TOKEN: ${CI_METRICS_TOKEN:?CI_METRICS_TOKEN required}
       TRUST_PROXY: loopback
       CHECKOUT_COUNTRIES: CI
       CORS_ORIGIN: https://shop.test.invalid

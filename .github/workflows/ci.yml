@@ -77,10 +77,12 @@ jobs:
       - run: docker build --pull -t tondjassa-frontend:ci frontend
       - name: Start production images with isolated services
         run: |
-          printf 'CI_JWT_SECRET=%s\n' "$(openssl rand -hex 32)" > "$RUNNER_TEMP/smoke.env"
+          printf 'CI_JWT_SECRET=%s\nCI_METRICS_TOKEN=%s\n' "$(openssl rand -hex 32)" "$(openssl rand -hex 32)" > "$RUNNER_TEMP/smoke.env"
           chmod 600 "$RUNNER_TEMP/smoke.env"
           docker compose --env-file "$RUNNER_TEMP/smoke.env" -p tondjassa-ci -f .github/compose.smoke.yml up -d --wait --wait-timeout 150
           curl --fail --silent http://127.0.0.1:4002/health/ready
+          metrics_token=$(sed -n 's/^CI_METRICS_TOKEN=//p' "$RUNNER_TEMP/smoke.env")
+          curl --fail --silent -H "Authorization: Bearer $metrics_token" http://127.0.0.1:4002/api/internal/metrics | grep -q 'mandemarket_http_requests_total'
           curl --fail --silent http://127.0.0.1:3000/ > /dev/null
       - name: Verify backup and restore on an isolated target
         env:

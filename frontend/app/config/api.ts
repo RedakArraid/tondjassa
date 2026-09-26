@@ -69,13 +69,6 @@ class ApiService {
       return data;
     } catch (error) {
       console.error('🚨 API Network Error:', error);
-      
-      // Fallback pour certaines opérations
-      if (endpoint === '/api/products' && options.method === 'GET') {
-        console.log('📦 Fallback: Utilisation des données locales');
-        return this.getFallbackProducts();
-      }
-      
       throw error;
     }
   }
@@ -169,34 +162,7 @@ class ApiService {
     }
   }
 
-  // Données de fallback
-  getFallbackProducts() {
-    return {
-      products: [
-        {
-          id: 1,
-          name: "Sac à main verni brillant avec anneau de levage",
-          price: 150000,
-          category: "Luxe",
-          image: "https://images.unsplash.com/photo-1584917865442-de89df76afd3?w=400&h=400&fit=crop&crop=center",
-          description: "Sac à main élégant avec finition vernie brillante",
-          stock: 12,
-          status: "active"
-        },
-        {
-          id: 2,
-          name: "Sac imprimé géométrique vintage léger tendance",
-          price: 125000,
-          category: "Vintage",
-          image: "https://images.unsplash.com/photo-1553062407-98eeb64c6a62?w=400&h=400&fit=crop&crop=center",
-          description: "Sac tendance avec motifs géométriques vintage",
-          stock: 8,
-          status: "active"
-        }
-      ]
-    };
-  }
-
+  // Aucune donnée commerciale fictive n'est injectée lorsque l'API est indisponible.
   // Test de connectivité
   async testConnection(): Promise<boolean> {
     try {
@@ -218,7 +184,7 @@ export class ProductService {
       return response.products || response || [];
     } catch (error) {
       console.error('Erreur lors du chargement des produits:', error);
-      return apiService.getFallbackProducts().products || [];
+      return [];
     }
   }
 
@@ -255,9 +221,7 @@ export class ProductService {
       return response.product || response;
     } catch (error) {
       console.error('Erreur lors du chargement du produit:', error);
-      // Fallback: chercher dans les données locales
-      const fallbackProducts = apiService.getFallbackProducts().products || [];
-      return fallbackProducts.find(p => p.id.toString() === id) || null;
+      return null;
     }
   }
 
@@ -334,32 +298,7 @@ export class CategoryService {
       return response.categories || response || [];
     } catch (error) {
       console.error('Erreur lors du chargement des catégories:', error);
-      return [
-        {
-          id: "cat-001-luxury",
-          name: "Luxury",
-          description: "Sacs de luxe et accessoires premium",
-          image: "https://images.unsplash.com/photo-1553062407-98eeb64c6a62?w=400&h=300&fit=crop"
-        },
-        {
-          id: "cat-002-vintage",
-          name: "Vintage",
-          description: "Sacs vintage et rétro authentiques",
-          image: "https://images.unsplash.com/photo-1594223274512-ad4803739b7c?w=400&h=300&fit=crop"
-        },
-        {
-          id: "cat-003-business",
-          name: "Business",
-          description: "Sacs professionnels et élégants",
-          image: "https://images.unsplash.com/photo-1548036328-c9fa89d128fa?w=400&h=300&fit=crop"
-        },
-        {
-          id: "cat-004-casual",
-          name: "Casual",
-          description: "Sacs décontractés et quotidiens",
-          image: "https://images.unsplash.com/photo-1578662996442-48f60103fc96?w=400&h=300&fit=crop"
-        }
-      ];
+      return [];
     }
   }
 

@@ -52,3 +52,18 @@ Conserver les limitations du runbook : remboursements CinetPay/hors ligne avec
 attestation d'une operation externe reelle, suivi transporteur manuel, rapprochement
 des donnees historiques, sauvegarde chiffree hors serveur et alertes a valider.
 La PR reste en brouillon tant que ces conditions ne sont pas satisfaites.
+
+
+## Renforcement complémentaire
+
+La recette vérifie aussi les en-têtes de sécurité du frontend (CSP, anti-framing,
+HSTS sur HTTPS et nosniff), le refus d'accès anonyme aux métriques internes, puis
+l'accès avec un jeton de monitoring éphémère. Les métriques sont volontairement
+à faible cardinalité : méthode, classe de statut, durée, requêtes en vol et métriques
+processus ; aucun email, identifiant de commande ou chemin dynamique n'est utilisé
+comme label.
+
+Le parcours vendeur couvre désormais la duplication d'un produit et la mise à jour
+du stock, puis vérifie la projection serveur. Le parcours administrateur vérifie la
+visibilité de la boutique et l'accès au journal d'audit. Une panne API ne déclenche
+plus l'affichage de faux produits ou de catégories de démonstration côté frontend.

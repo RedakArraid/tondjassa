@@ -20,8 +20,11 @@ MAIL = "http://127.0.0.1:8025"
 OUT = Path("qa-results")
 OUT.mkdir(exist_ok=True)
 PASSWORD = os.environ.get("E2E_PASSWORD", "")
+OPS_TOKEN = os.environ.get("CI_METRICS_TOKEN", "")
 if len(PASSWORD) < 16:
     raise RuntimeError("E2E_PASSWORD must be generated for this isolated run")
+if len(OPS_TOKEN) < 32:
+    raise RuntimeError("CI_METRICS_TOKEN must be generated for this isolated run")
 TOKEN_KEY = "mandemarket_customer_token"
 EXTERNAL = re.compile(r"^https?://(?!localhost:3443(?:/|$))")
 
@@ -209,6 +212,61 @@ class BrowserAcceptance(unittest.TestCase):
         self.page.wait_for_load_state("networkidle")
         self.page.reload()
         expect(self.page.get_by_text("Article recette QA", exact=True).first).to_be_visible()
+
+    def test_07_security_headers_and_internal_metrics(self):
+        response = self.context.request.get(BASE + "/")
+        self.assertEqual(response.status, 200)
+        headers = response.headers
+        csp = headers.get("content-security-policy", "")
+        self.assertIn("frame-ancestors 'none'", csp)
+        self.assertIn("object-src 'none'", csp)
+        self.assertIn("max-age=", headers.get("strict-transport-security", ""))
+        self.assertEqual(headers.get("x-content-type-options"), "nosniff")
+
+        denied = self.api("/api/internal/metrics")
+        self.assertEqual(denied.status, 404)
+        metrics = self.api("/api/internal/metrics", headers={"Authorization": "Bearer " + OPS_TOKEN})
+        self.assertEqual(metrics.status, 200)
+        body = metrics.text()
+        self.assertIn("mandemarket_http_requests_total", body)
+        self.assertIn("mandemarket_http_request_duration_seconds", body)
+
+    def test_08_seller_catalog_management(self):
+        token = self.login("qa-seller@test.invalid", PASSWORD, staff=True)
+        self.page.goto(BASE + "/vendeur/dashboard/produits")
+        expect(self.page.get_by_role("heading", name="Tous les produits")).to_be_visible()
+        expect(self.page.get_by_text("Article recette QA", exact=True).first).to_be_visible()
+
+        self.page.get_by_role("button", name="Dupliquer").first.click()
+        expect(self.page.get_by_text(re.compile("Produit dupliqu.*succ", re.I))).to_be_visible()
+
+        products = self.api("/api/sellers/me/products?limit=50", token)
+        self.assertEqual(products.status, 200)
+        data = products.json()["products"]
+        original = next(product for product in data if product["name"] == "Article recette QA")
+        self.assertTrue(any(product["name"].startswith("[Copie]") for product in data))
+
+        stock = self.api(
+            f"/api/sellers/me/products/{original['id']}/stock",
+            token,
+            method="PUT",
+            data={"quantity": 7, "lowStockThreshold": 5},
+        )
+        self.assertEqual(stock.status, 200)
+        self.assertEqual(stock.json()["stock"], 7)
+
+    def test_09_admin_marketplace_and_audit(self):
+        token = self.login("qa-admin@test.invalid", PASSWORD, staff=True)
+        sellers = self.api("/api/sellers/admin/all", token)
+        self.assertEqual(sellers.status, 200)
+        payload = sellers.json()
+        seller_list = payload if isinstance(payload, list) else payload.get("sellers", [])
+        self.assertTrue(any(seller.get("storeName") == "QA Boutique" for seller in seller_list))
+
+        audit = self.api("/api/admin/audit-logs?page=1&limit=10", token)
+        self.assertEqual(audit.status, 200)
+        self.page.goto(BASE + "/admin/dashboard")
+        expect(self.page.get_by_text("MandeMarket", exact=True).first).to_be_visible()
 
 
 if __name__ == "__main__":

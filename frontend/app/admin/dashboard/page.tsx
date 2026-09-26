@@ -260,7 +260,7 @@ export default function AdminDashboard() {
           <div>
             <div className="p-6 border-b border-white/10">
               <h1 className="text-2xl font-extrabold">
-                <span className="text-white">Mandin</span>
+                <span className="text-white">Mande</span>
                 <span className="text-brand-orange">Market</span>
               </h1>
               <p className="text-brand-orange font-medium text-sm mt-1">Super Admin</p>

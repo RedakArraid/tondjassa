@@ -222,7 +222,7 @@ export default function DevenirVendeurPage() {
                 />
               </div>
               <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-1.5">Mot de passe * <span className="font-normal text-gray-400">(8 caractères min.)</span></label>
+                <label className="block text-sm font-semibold text-gray-700 mb-1.5">Mot de passe * <span className="font-normal text-gray-400">(12 caractères min.)</span></label>
                 <input
                   type="password" name="password" value={form.password} onChange={handleChange} required minLength={12}
                   placeholder="••••••••"
