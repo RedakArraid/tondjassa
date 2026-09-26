@@ -3,6 +3,7 @@ const { z } = require('zod');
 const router = express.Router();
 const { requireAuth, requireAdmin, requireSeller } = require('./middleware.auth');
 const db = require('./db');
+const ReviewService = require('./services/review.service');
 
 // Slugify helper
 function slugify(text) {
