@@ -55,6 +55,41 @@ dc build --pull mandemarket-backend mandemarket-frontend
 dc run --rm --no-deps mandemarket-backend node scripts/production-preflight.js
 ```
 
+### One-time legacy migration baseline
+
+Databases created by the historical migrations (before `0_init`) must be aligned
+with the checked-in baseline before Prisma can mark it as applied. Never use
+`db push`, never resolve `0_init` before the schema comparison is empty, and first
+execute the complete procedure on a fresh restore of the production backup.
+
+With the application and worker stopped, the one-time production sequence is:
+
+```bash
+docker exec -i mandemarket-db sh -lc \
+  'psql -X -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB"' \
+  < backend/scripts/controlled_migration.sql
+docker exec -i mandemarket-db sh -lc \
+  'psql -X -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB"' \
+  < backend/scripts/reconcile-legacy-baseline.sql
+
+dc run --rm --no-deps --entrypoint /app/node_modules/.bin/prisma \
+  mandemarket-backend migrate resolve --applied 0_init
+dc run --rm --no-deps --entrypoint /app/node_modules/.bin/prisma \
+  mandemarket-backend migrate deploy
+dc run --rm --no-deps --entrypoint /app/node_modules/.bin/prisma \
+  mandemarket-backend migrate status
+```
+
+Both reconciliation scripts are idempotent. The first one creates the historical
+phase-one structures that were consolidated into `0_init`. The second does not
+mutate application rows and aborts if any of the six historical foreign keys has
+orphan rows or an unexpected definition. It briefly locks the affected child
+tables while replacing the legacy `RESTRICT`/`SET NULL` actions with the baseline
+`CASCADE` actions and creating the 17 baseline indexes. Its 10-second lock timeout
+intentionally fails the deployment instead of waiting indefinitely. Keep
+maintenance enabled until `migrate status`, the final Prisma schema diff, the
+preflight and the HTTP readiness smoke all pass.
+
 The preflight command is read-only after entrypoint migration and must succeed.
 It checks inventory consistency, duplicate sales and unresolved refunds. Investigate
 rather than silently discarding errors. Validate previously NOT VALID constraints
