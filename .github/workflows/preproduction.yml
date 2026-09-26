@@ -46,6 +46,7 @@ jobs:
           set +a
           docker compose --env-file "$RUNNER_TEMP/browser.env" -f .github/compose.smoke.yml -f .github/compose.browser.yml exec -T -e E2E_FIXTURES=true -e E2E_PASSWORD="$E2E_PASSWORD" backend node e2e/seed.js
           python e2e/browser_acceptance.py
+          QA_CERTS_DIR="$QA_CERTS_DIR" python e2e/http_concurrency_smoke.py
       - name: Diagnostics on failure (fictitious data only)
         if: failure()
         run: |

@@ -112,3 +112,63 @@ jobs:
             docker compose --env-file "$RUNNER_TEMP/smoke.env" -p tondjassa-ci -f .github/compose.smoke.yml down -v --remove-orphans
             rm -f "$RUNNER_TEMP/smoke.env"
           fi
+
+  evidence:
+    name: Release candidate evidence
+    needs: [quality, integration, containers]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+        with: { persist-credentials: false }
+      - name: Build immutable release evidence
+        run: |
+          mkdir -p release-evidence
+          sha256sum \
+            .nvmrc \
+            package-lock.json \
+            backend/package-lock.json \
+            frontend/package-lock.json \
+            backend/prisma/schema.prisma \
+            backend/Dockerfile \
+            frontend/Dockerfile \
+            docker-compose.prod.yml \
+            > release-evidence/checksums.sha256
+          export RELEASE_SHA="$GITHUB_SHA"
+          export RELEASE_REF="$GITHUB_REF"
+          export RELEASE_RUN_ID="$GITHUB_RUN_ID"
+          export RELEASE_RUN_ATTEMPT="$GITHUB_RUN_ATTEMPT"
+          export RELEASE_REPOSITORY="$GITHUB_REPOSITORY"
+          node <<'NODE'
+          const fs = require('fs');
+          const root = require('./package.json');
+          const backend = require('./backend/package.json');
+          const frontend = require('./frontend/package.json');
+          const evidence = {
+            schema: 1,
+            sha: process.env.RELEASE_SHA,
+            ref: process.env.RELEASE_REF,
+            repository: process.env.RELEASE_REPOSITORY,
+            workflowRunId: process.env.RELEASE_RUN_ID,
+            workflowRunAttempt: Number(process.env.RELEASE_RUN_ATTEMPT),
+            generatedAt: new Date().toISOString(),
+            gates: {
+              quality: 'success',
+              postgresqlIntegration: 'success',
+              productionContainersAndRestore: 'success'
+            },
+            versions: {
+              root: root.version || null,
+              backend: backend.version || null,
+              frontend: frontend.version || null,
+              node: fs.readFileSync('.nvmrc', 'utf8').trim()
+            },
+            deploysProduction: false
+          };
+          fs.writeFileSync('release-evidence/release-candidate.json', JSON.stringify(evidence, null, 2) + '\n');
+          NODE
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-candidate-${{ github.sha }}
+          path: release-evidence/
+          retention-days: 30
