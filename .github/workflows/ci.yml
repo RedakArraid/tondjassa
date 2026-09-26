@@ -84,6 +84,20 @@ jobs:
           metrics_token=$(sed -n 's/^CI_METRICS_TOKEN=//p' "$RUNNER_TEMP/smoke.env")
           curl --fail --silent -H "Authorization: Bearer $metrics_token" http://127.0.0.1:4002/api/internal/metrics | grep -q 'mandemarket_http_requests_total'
           curl --fail --silent http://127.0.0.1:3000/ > /dev/null
+      - name: Verify application containers are sandboxed
+        run: |
+          compose=(docker compose --env-file "$RUNNER_TEMP/smoke.env" -p tondjassa-ci -f .github/compose.smoke.yml)
+          for service in backend worker frontend; do
+            cid="$("${compose[@]}" ps -q "$service")"
+            test -n "$cid"
+            test "$(docker inspect -f '{{.HostConfig.ReadonlyRootfs}}' "$cid")" = true
+            docker inspect -f '{{json .HostConfig.SecurityOpt}}' "$cid" | grep -q 'no-new-privileges'
+            docker inspect -f '{{json .HostConfig.CapDrop}}' "$cid" | grep -q '"ALL"'
+            "${compose[@]}" exec -T "$service" sh -c 'test "$(id -u)" -ne 0'
+          done
+          "${compose[@]}" exec -T backend sh -c 'touch /app/tmp/runtime-write && ! touch /app/runtime-must-stay-readonly 2>/dev/null'
+          "${compose[@]}" exec -T worker sh -c 'touch /app/tmp/worker-write && ! touch /app/worker-must-stay-readonly 2>/dev/null'
+          "${compose[@]}" exec -T frontend sh -c 'touch /app/.next/cache/frontend-write && ! touch /app/frontend-must-stay-readonly 2>/dev/null'
       - name: Verify backup and restore on an isolated target
         env:
           ENV_FILE: ${{ runner.temp }}/smoke.env

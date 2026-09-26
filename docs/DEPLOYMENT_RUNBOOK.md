@@ -130,3 +130,17 @@ out an old commit and running `up` does not change an already built image.
 
 After restore/rollback: migrate as appropriate, run preflight, compare provider and
 ledger records, verify accounts and health, and only then reopen traffic.
+
+
+## Isolation des conteneurs applicatifs
+
+Les services backend, worker et frontend doivent conserver les protections définies
+dans `docker-compose.prod.yml` : utilisateur non-root, root filesystem en lecture
+seule, `no-new-privileges`, suppression de toutes les capacités Linux et limite de
+processus. Les seuls emplacements temporaires écrits par l'application sont montés
+en `tmpfs`; les uploads et logs backend restent sur leurs volumes dédiés.
+
+Avant une mise en ligne, ne retirez pas ces protections pour contourner une erreur.
+Identifiez plutôt le chemin qui nécessite réellement une écriture et ajoutez un
+montage dédié minimal. La CI vérifie explicitement que les trois conteneurs
+applicatifs restent non-root, en lecture seule et sans capacités Linux.

@@ -58,6 +58,15 @@ services:
         condition: service_healthy
     restart: unless-stopped
     init: true
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    pids_limit: 256
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m
+      - /app/tmp:rw,noexec,nosuid,size=32m
     logging:
       driver: json-file
       options:
@@ -123,6 +132,15 @@ services:
         condition: service_healthy
     restart: unless-stopped
     init: true
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    pids_limit: 256
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m
+      - /app/.next/cache:rw,noexec,nosuid,size=64m
     logging:
       driver: json-file
       options:

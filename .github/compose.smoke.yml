@@ -39,6 +39,15 @@ services:
       CLOUDINARY_API_KEY: ci-placeholder
       CLOUDINARY_API_SECRET: ci-placeholder
     ports: ['127.0.0.1:4002:4002']
+    read_only: true
+    security_opt: ['no-new-privileges:true']
+    cap_drop: ['ALL']
+    pids_limit: 256
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m
+      - /app/tmp:rw,noexec,nosuid,size=32m
+      - /app/uploads:rw,noexec,nosuid,size=32m
+      - /app/logs:rw,noexec,nosuid,size=16m
     depends_on:
       postgres: { condition: service_healthy }
       redis: { condition: service_healthy }
@@ -53,6 +62,15 @@ services:
       <<: *app_env
       RUN_MIGRATIONS: 'false'
     command: [node, scripts/worker.js]
+    read_only: true
+    security_opt: ['no-new-privileges:true']
+    cap_drop: ['ALL']
+    pids_limit: 128
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=32m
+      - /app/tmp:rw,noexec,nosuid,size=32m
+      - /app/uploads:rw,noexec,nosuid,size=16m
+      - /app/logs:rw,noexec,nosuid,size=16m
     depends_on:
       backend: { condition: service_healthy }
     healthcheck:
@@ -67,6 +85,13 @@ services:
       HOSTNAME: 0.0.0.0
       INTERNAL_API_URL: http://backend:4002
     ports: ['127.0.0.1:3000:3000']
+    read_only: true
+    security_opt: ['no-new-privileges:true']
+    cap_drop: ['ALL']
+    pids_limit: 256
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m
+      - /app/.next/cache:rw,noexec,nosuid,size=64m
     depends_on:
       backend: { condition: service_healthy }
     healthcheck:
