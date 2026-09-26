@@ -2,7 +2,7 @@ const express = require('express');
 const { z } = require('zod');
 const router = express.Router();
 const db = require('./db');
-const { requireAuth, requireAdmin, requireRole } = require('./middleware.auth');
+const { requireAuth, requireRole, optionalAuth } = require('./middleware.auth');
 
 // 🔧 Fonction pour générer un slug à partir du nom
 function generateSlug(name) {
@@ -16,74 +16,77 @@ function generateSlug(name) {
 
 // Zod schema for category validation (SANS icon et image)
 const categorySchema = z.object({
-  name: z.string().min(1, "Le nom est requis"),
-  slug: z.string().optional(),
-  description: z.string().optional().default(""),
+  name: z.string().trim().min(1, "Le nom est requis").max(120),
+  slug: z.string().trim().min(1).max(140).regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/).optional(),
+  description: z.string().max(2000).optional().default(""),
   status: z.enum(['active', 'inactive']).optional().default('active'),
   parentId: z.string().uuid().nullable().optional()
     .transform(val => val === null || val === '' ? null : val),
-  displayOrder: z.number().int().optional().default(0)
+  displayOrder: z.number().int().min(-10000).max(10000).optional().default(0)
 });
 
-// GET all categories (avec hiérarchie)
-router.get('/', async (req, res) => {
+const canManageCategories = (req) => ['admin', 'manager'].includes(req.user?.role);
+const publicProductWhere = {
+  status: 'active',
+  OR: [{ sellerId: null }, { seller: { is: { status: 'approved' } } }],
+};
+
+async function wouldCreateCategoryCycle(categoryId, parentId) {
+  if (!parentId) return false;
+  const visited = new Set([categoryId]);
+  let current = parentId;
+  for (let depth = 0; current && depth < 100; depth += 1) {
+    if (visited.has(current)) return true;
+    visited.add(current);
+    const parent = await db.category.findUnique({ where: { id: current }, select: { parentId: true } });
+    if (!parent) return false;
+    current = parent.parentId;
+  }
+  return Boolean(current);
+}
+
+// GET all categories. Public clients only see active taxonomy entries.
+router.get('/', optionalAuth, async (req, res) => {
   try {
     const includeHierarchy = req.query.hierarchy === 'true';
-    
+    const canManage = canManageCategories(req);
+    const categoryWhere = canManage ? {} : { status: 'active' };
+    const productCount = canManage ? true : { where: publicProductWhere };
+
     if (includeHierarchy) {
-      // Récupérer seulement les catégories principales (sans parent)
       const mainCategories = await db.category.findMany({
-        where: { parentId: null },
+        where: { parentId: null, ...categoryWhere },
         include: {
           subcategories: {
-            include: {
-              _count: {
-                select: { products: true }
-              }
-            },
-            orderBy: { displayOrder: 'asc' }
+            where: categoryWhere,
+            include: { _count: { select: { products: productCount } } },
+            orderBy: { displayOrder: 'asc' },
           },
-          _count: {
-            select: { products: true }
-          }
+          _count: { select: { products: productCount } },
         },
-        orderBy: { displayOrder: 'asc' }
+        orderBy: { displayOrder: 'asc' },
       });
-      
-      // Formater avec productCount
-      const categoriesWithCount = mainCategories.map(cat => ({
+      return res.json(mainCategories.map((cat) => ({
         ...cat,
         productCount: cat._count.products,
-        subcategories: cat.subcategories.map(sub => ({
-          ...sub,
-          productCount: sub._count.products
-        }))
-      }));
-      
-      return res.json(categoriesWithCount);
+        subcategories: cat.subcategories.map((sub) => ({ ...sub, productCount: sub._count.products })),
+      })));
     }
-    
-    // Sans hiérarchie : toutes les catégories à plat
+
     const categories = await db.category.findMany({
+      where: categoryWhere,
       include: {
         parent: true,
-        subcategories: true,
-        _count: {
-          select: { products: true }
-        }
+        subcategories: { where: categoryWhere },
+        _count: { select: { products: productCount } },
       },
-      orderBy: [
-        { displayOrder: 'asc' },
-        { name: 'asc' }
-      ]
+      orderBy: [{ displayOrder: 'asc' }, { name: 'asc' }],
     });
-    
-    const categoriesWithCount = categories.map(cat => ({
+    res.json(categories.map((cat) => ({
       ...cat,
-      productCount: cat._count.products
-    }));
-    
-    res.json(categoriesWithCount);
+      parent: canManage || cat.parent?.status === 'active' ? cat.parent : null,
+      productCount: cat._count.products,
+    })));
   } catch (error) {
     console.error('Erreur lors de la récupération des catégories:', error);
     res.status(500).json({ error: 'Erreur serveur' });
@@ -91,41 +94,31 @@ router.get('/', async (req, res) => {
 });
 
 // GET category by id
-router.get('/:id', async (req, res) => {
+router.get('/:id', optionalAuth, async (req, res) => {
   try {
-    const id = req.params.id;
+    const canManage = canManageCategories(req);
+    const productFilter = canManage ? undefined : publicProductWhere;
     const category = await db.category.findUnique({
-      where: { id },
+      where: { id: req.params.id },
       include: {
-        products: true,
+        products: productFilter ? { where: productFilter } : true,
         parent: true,
         subcategories: {
-          include: {
-            _count: {
-              select: { products: true }
-            }
-          }
+          where: canManage ? {} : { status: 'active' },
+          include: { _count: { select: { products: canManage ? true : { where: publicProductWhere } } } },
         },
-        _count: {
-          select: { products: true }
-        }
-      }
+        _count: { select: { products: canManage ? true : { where: publicProductWhere } } },
+      },
     });
-    
-    if (!category) {
+    if (!category || (!canManage && category.status !== 'active')) {
       return res.status(404).json({ error: 'Category not found' });
     }
-    
-    const categoryWithCount = {
+    res.json({
       ...category,
+      parent: canManage || category.parent?.status === 'active' ? category.parent : null,
       productCount: category._count.products,
-      subcategories: category.subcategories.map(sub => ({
-        ...sub,
-        productCount: sub._count.products
-      }))
-    };
-    
-    res.json(categoryWithCount);
+      subcategories: category.subcategories.map((sub) => ({ ...sub, productCount: sub._count.products })),
+    });
   } catch (error) {
     console.error('Erreur lors de la récupération de la catégorie:', error);
     res.status(500).json({ error: 'Erreur serveur' });
@@ -152,11 +145,10 @@ router.post('/', requireAuth, requireRole(['admin', 'manager']), async (req, res
     
     // Si parentId est fourni, vérifier que la catégorie parente existe
     if (data.parentId) {
-      const parent = await db.category.findUnique({
-        where: { id: data.parentId }
-      });
-      if (!parent) {
-        return res.status(400).json({ error: 'Catégorie parente non trouvée' });
+      const parent = await db.category.findUnique({ where: { id: data.parentId } });
+      if (!parent) return res.status(400).json({ error: 'Catégorie parente non trouvée' });
+      if (data.status === 'active' && parent.status !== 'active') {
+        return res.status(409).json({ error: 'Une catégorie active ne peut pas dépendre d’une catégorie inactive' });
       }
     }
     
@@ -210,19 +202,26 @@ router.put('/:id', requireAuth, requireRole(['admin', 'manager']), async (req, r
       }
     }
     
-    // Vérifier qu'on ne crée pas de boucle (catégorie qui serait son propre parent)
-    if (data.parentId === id) {
-      return res.status(400).json({ error: 'Une catégorie ne peut pas être son propre parent' });
+    if (data.slug) {
+      const slugExists = await db.category.findFirst({ where: { slug: data.slug, id: { not: id } } });
+      if (slugExists) return res.status(409).json({ error: 'Ce slug de catégorie est déjà utilisé' });
     }
-    
-    // Si parentId change, vérifier que la nouvelle catégorie parente existe
-    if (data.parentId && data.parentId !== existingCategory.parentId) {
-      const parent = await db.category.findUnique({
-        where: { id: data.parentId }
-      });
-      if (!parent) {
-        return res.status(400).json({ error: 'Catégorie parente non trouvée' });
+
+    const effectiveParentId = data.parentId !== undefined ? data.parentId : existingCategory.parentId;
+    const effectiveStatus = data.status || existingCategory.status;
+    if (effectiveParentId) {
+      const parent = await db.category.findUnique({ where: { id: effectiveParentId } });
+      if (!parent) return res.status(400).json({ error: 'Catégorie parente non trouvée' });
+      if (await wouldCreateCategoryCycle(id, effectiveParentId)) {
+        return res.status(409).json({ error: 'Cette hiérarchie créerait une boucle de catégories' });
       }
+      if (effectiveStatus === 'active' && parent.status !== 'active') {
+        return res.status(409).json({ error: 'Une catégorie active ne peut pas dépendre d’une catégorie inactive' });
+      }
+    }
+    if (data.status === 'inactive') {
+      const activeChildren = await db.category.count({ where: { parentId: id, status: 'active' } });
+      if (activeChildren > 0) return res.status(409).json({ error: 'Désactivez d’abord les sous-catégories actives' });
     }
     
     const category = await db.category.update({
