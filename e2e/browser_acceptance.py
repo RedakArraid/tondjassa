@@ -445,6 +445,201 @@ class BrowserAcceptance(unittest.TestCase):
         self.assertEqual(resub.status, 200)
 
 
+    def test_13_private_catalog_category_invariants_and_rbac(self):
+        self.assertEqual(self.api("/api/products?status=draft").status, 403)
+        categories = self.api("/api/categories")
+        self.assertEqual(categories.status, 200)
+        self.assertFalse(any(item["slug"] == "qa-cachee" for item in categories.json()))
+
+        admin_token = self.login("qa-admin@test.invalid", PASSWORD, staff=True)
+        draft_list = self.api("/api/products?status=draft", admin_token)
+        self.assertEqual(draft_list.status, 200)
+        draft = next(item for item in draft_list.json()["products"] if item["name"] == "Brouillon privé QA")
+        self.assertEqual(self.api(f"/api/products/{draft['id']}").status, 404)
+
+        admin_categories = self.api("/api/categories", admin_token)
+        self.assertEqual(admin_categories.status, 200)
+        self.assertTrue(any(item["slug"] == "qa-cachee" for item in admin_categories.json()))
+
+        parent = self.api(
+            "/api/categories",
+            admin_token,
+            method="POST",
+            data={"name": "QA Parent cycle", "slug": "qa-parent-cycle", "status": "active"},
+        )
+        self.assertEqual(parent.status, 201)
+        child = self.api(
+            "/api/categories",
+            admin_token,
+            method="POST",
+            data={
+                "name": "QA Child cycle",
+                "slug": "qa-child-cycle",
+                "status": "active",
+                "parentId": parent.json()["id"],
+            },
+        )
+        self.assertEqual(child.status, 201)
+        cycle = self.api(
+            f"/api/categories/{parent.json()['id']}",
+            admin_token,
+            method="PUT",
+            data={"parentId": child.json()["id"]},
+        )
+        self.assertEqual(cycle.status, 409)
+        self.assertEqual(self.api(f"/api/categories/{child.json()['id']}", admin_token, method="DELETE").status, 204)
+        self.assertEqual(self.api(f"/api/categories/{parent.json()['id']}", admin_token, method="DELETE").status, 204)
+
+        invalid = self.api(
+            "/api/admin/users",
+            admin_token,
+            method="POST",
+            data={
+                "email": "qa-broken-seller@test.invalid",
+                "name": "Broken Seller",
+                "password": PASSWORD,
+                "role": "seller",
+            },
+        )
+        self.assertEqual(invalid.status, 400)
+
+        self.page.evaluate("localStorage.clear()")
+        seller_token = self.login("qa-seller@test.invalid", PASSWORD, staff=True)
+        own_drafts = self.api("/api/products?status=draft", seller_token)
+        self.assertEqual(own_drafts.status, 200)
+        self.assertTrue(any(item["id"] == draft["id"] for item in own_drafts.json()["products"]))
+        self.assertEqual(self.api(f"/api/products/{draft['id']}", seller_token).status, 200)
+
+    def test_14_full_return_manual_refund_and_restock(self):
+        buyer_token = self.login("qa-buyer@test.invalid", PASSWORD)
+        orders = self.api("/api/account/orders?limit=100", buyer_token)
+        self.assertEqual(orders.status, 200)
+        order = next(item for item in orders.json()["orders"] if item["orderNumber"] == "QA-RETURN-DELIVERED")
+        product_id = order["items"][0]["product"]["id"]
+        before_stock_response = self.api(f"/api/products/{product_id}")
+        self.assertEqual(before_stock_response.status, 200)
+        before_stock = before_stock_response.json()["stock"]
+
+        created = self.api(
+            f"/api/account/orders/{order['id']}/return-request",
+            buyer_token,
+            method="POST",
+            data={"reason": "Produit QA à retourner", "description": "Retour fictif intégral pour recette."},
+        )
+        self.assertEqual(created.status, 201)
+        return_id = created.json()["id"]
+
+        self.page.evaluate("localStorage.clear()")
+        admin_token = self.login("qa-admin@test.invalid", PASSWORD, staff=True)
+        approved = self.api(f"/api/admin/returns/{return_id}/approve", admin_token, method="POST")
+        self.assertEqual(approved.status, 200)
+        self.assertTrue(mail_received("qa-buyer@test.invalid", "Mise à jour de votre retour"))
+
+        forbidden_reject = self.api(
+            f"/api/admin/returns/{return_id}/reject",
+            admin_token,
+            method="POST",
+            data={"reason": "Tentative après approbation"},
+        )
+        self.assertEqual(forbidden_reject.status, 409)
+
+        requested = self.api(
+            f"/api/admin/returns/{return_id}/process-refund",
+            admin_token,
+            method="POST",
+            data={"itemsReceived": True},
+        )
+        self.assertEqual(requested.status, 202)
+        refund = requested.json()["refund"]
+        self.assertEqual(refund["status"], "MANUAL_REQUIRED")
+
+        confirmed = self.api(
+            f"/api/admin/refunds/{refund['id']}/confirm-manual",
+            admin_token,
+            method="POST",
+            data={
+                "confirmed": True,
+                "reference": "QA-MANUAL-REFUND-001",
+                "amount": refund["amount"],
+                "currency": refund["currency"],
+            },
+        )
+        self.assertEqual(confirmed.status, 200)
+        self.assertEqual(confirmed.json()["refund"]["status"], "COMPLETED")
+
+        repeated = self.api(
+            f"/api/admin/refunds/{refund['id']}/confirm-manual",
+            admin_token,
+            method="POST",
+            data={
+                "confirmed": True,
+                "reference": "QA-MANUAL-REFUND-001",
+                "amount": refund["amount"],
+                "currency": refund["currency"],
+            },
+        )
+        self.assertEqual(repeated.status, 200)
+
+        after_order = self.api(f"/api/account/orders/{order['id']}", buyer_token)
+        self.assertEqual(after_order.status, 200)
+        self.assertEqual(after_order.json()["status"], "REFUNDED")
+        after_stock = self.api(f"/api/products/{product_id}").json()["stock"]
+        self.assertEqual(after_stock, before_stock + 1)
+
+        returns = self.api("/api/account/returns", buyer_token)
+        self.assertEqual(returns.status, 200)
+        self.assertTrue(any(item["id"] == return_id and item["status"] == "completed" for item in returns.json()["returns"]))
+
+        self.page.evaluate("localStorage.clear()")
+        seller_token = self.login("qa-seller@test.invalid", PASSWORD, staff=True)
+        profile = self.api("/api/sellers/me/profile", seller_token)
+        self.assertEqual(profile.status, 200)
+        self.assertEqual(profile.json()["totalSales"], 0)
+        self.assertEqual(profile.json()["totalEarnings"], 0)
+
+    def test_15_privileged_role_change_revokes_existing_sessions(self):
+        admin_token = self.login("qa-admin@test.invalid", PASSWORD, staff=True)
+        email = "qa-manager@test.invalid"
+        created = self.api(
+            "/api/admin/users",
+            admin_token,
+            method="POST",
+            data={"email": email, "name": "QA Manager", "password": PASSWORD, "role": "manager"},
+        )
+        self.assertEqual(created.status, 201)
+        manager_id = created.json()["id"]
+
+        self.page.goto(mail_link(email, "/compte/verifier-email"))
+        manager_password = PASSWORD + "m"
+        self.page.get_by_label("Nouveau mot de passe").fill(manager_password)
+        self.page.get_by_role("button", name="Confirmer", exact=True).click()
+        expect(self.page.get_by_role("status")).to_contain_text("Adresse verifiee")
+
+        self.page.evaluate("localStorage.clear()")
+        manager_token = self.login(email, manager_password, staff=True, expected_path="/admin/dashboard")
+        denied_create = self.api(
+            "/api/admin/users",
+            manager_token,
+            method="POST",
+            data={
+                "email": "qa-manager-created@test.invalid",
+                "name": "No",
+                "password": PASSWORD,
+                "role": "manager",
+            },
+        )
+        self.assertEqual(denied_create.status, 403)
+
+        changed = self.api(
+            f"/api/admin/users/{manager_id}/role",
+            admin_token,
+            method="PUT",
+            data={"role": "user"},
+        )
+        self.assertEqual(changed.status, 200)
+        self.assertEqual(self.api("/api/auth/me", manager_token).status, 401)
+
+
 if __name__ == "__main__":
     suite = unittest.defaultTestLoader.loadTestsFromTestCase(BrowserAcceptance)
     started = datetime.now(timezone.utc).isoformat()

@@ -109,3 +109,32 @@ un échec de livraison est exposé comme tel au vendeur.
 
 Les notifications de traitement des versements vendeur utilisent désormais la
 fonction email réellement exportée, au lieu d'un appel vers un nom inexistant.
+
+
+## Visibilité catalogue, RBAC et retours
+
+Les brouillons et archives produits ne sont plus énumérables via le catalogue
+public, même avec un paramètre `status`. Un produit privé renvoie 404 par ID au
+public ; seul son vendeur approuvé ou un compte de gestion peut le consulter.
+Les produits d'une catégorie inactive ou d'une boutique suspendue sont également
+exclus du catalogue et des listes de souhaits publiques.
+
+La taxonomie publique masque les catégories inactives. Les mutations admin refusent
+les cycles indirects et une catégorie active ne peut pas dépendre d'une catégorie
+inactive. L'admin ne peut plus fabriquer artificiellement un compte client/vendeur
+sans le profil métier associé : ces rôles passent par leurs parcours d'inscription.
+
+Un changement de rôle révoque immédiatement toutes les sessions existantes. Les
+managers peuvent consulter les comptes mais la création de comptes de gestion, le
+changement de rôle et la révocation de sessions restent réservés à l'administrateur.
+
+La recette couvre un retour intégral fictif de bout en bout : commande livrée et
+payée, demande client, approbation, refus d'une transition contradictoire, création
+du remboursement manuel à attester, confirmation exacte montant/devise/référence,
+répétition idempotente, remise en stock, statut REFUNDED et inversion des projections
+financières vendeur/client. Aucun PSP réel n'est appelé.
+
+Le même workflow exécute aussi `e2e/http_concurrency_smoke.py` : 90 lectures
+concurrentes modestes sur frontend, catalogue et readiness. Ce smoke détecte les
+5xx et erreurs de connexion évidents ; ce n'est ni un benchmark de capacité ni
+un engagement de latence.
