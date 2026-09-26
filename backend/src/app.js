@@ -163,8 +163,8 @@ const globalLimiter = rateLimit({
 });
 
 const authLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 20,
+  windowMs: config.AUTH_RATE_LIMIT_WINDOW_MS,
+  max: config.AUTH_RATE_LIMIT_MAX_REQUESTS,
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: 'Trop de tentatives d’authentification' },

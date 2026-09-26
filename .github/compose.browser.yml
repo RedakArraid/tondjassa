@@ -6,6 +6,7 @@ services:
       TRUST_PROXY: uniquelocal
       CHECKOUT_COUNTRIES: CI,FR
       RATE_LIMIT_MAX_REQUESTS: '1000'
+      AUTH_RATE_LIMIT_MAX_REQUESTS: '1000'
       CORS_ORIGIN: https://localhost:3443
       NEXT_PUBLIC_SITE_URL: https://localhost:3443
       BACKEND_URL: https://localhost:3443

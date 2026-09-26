@@ -423,13 +423,15 @@ class BrowserAcceptance(unittest.TestCase):
     def test_12_contact_smtp_and_durable_newsletter(self):
         self.page.goto(BASE + "/contact")
         expect(self.page.get_by_role("heading", name="Nous sommes à votre écoute")).to_be_visible()
-        self.page.get_by_placeholder("Ex: Fatoumata Traoré").fill("Contact QA")
-        self.page.get_by_placeholder("Ex: fatoumata@exemple.com").fill("qa-contact@test.invalid")
-        self.page.get_by_placeholder("Ex: Suivi de livraison, partenariat...").fill("Question QA contact")
-        self.page.get_by_placeholder("Détaillez votre question ou demande...").fill(
+        submit = self.page.get_by_role("button", name="Envoyer mon message").first
+        contact_form = self.page.locator("form").filter(has=submit).first
+        contact_form.get_by_placeholder("Ex: Fatoumata Traoré").fill("Contact QA")
+        contact_form.get_by_placeholder("Ex: fatoumata@exemple.com").fill("qa-contact@test.invalid")
+        contact_form.get_by_placeholder("Ex: Suivi de livraison, partenariat...").fill("Question QA contact")
+        contact_form.get_by_placeholder("Détaillez votre question ou demande...").fill(
             "Message fictif de recette pour vérifier la livraison SMTP du support."
         )
-        self.page.get_by_role("button", name="Envoyer mon message").click()
+        submit.click()
         expect(self.page.get_by_role("heading", name="Message bien transmis !")).to_be_visible()
         self.assertTrue(mail_received("qa-admin@test.invalid", "Question QA contact"))
 

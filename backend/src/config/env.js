@@ -12,6 +12,8 @@ const envSchema = z.object({
   CORS_ORIGIN: z.string().default('http://localhost:3000,http://frontend:3000,http://127.0.0.1:3000'),
   RATE_LIMIT_WINDOW_MS: z.coerce.number().default(15 * 60 * 1000),
   RATE_LIMIT_MAX_REQUESTS: z.coerce.number().default(100),
+  AUTH_RATE_LIMIT_WINDOW_MS: z.coerce.number().default(15 * 60 * 1000),
+  AUTH_RATE_LIMIT_MAX_REQUESTS: z.coerce.number().default(20),
   METRICS_TOKEN: z.string().min(32, 'METRICS_TOKEN doit contenir au moins 32 caracteres').optional(),
   
   TRUST_PROXY: z.string().optional(),
