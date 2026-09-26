@@ -91,3 +91,21 @@ l'identité du compte, puis vérifie une commande de ce même client en état SH
 ou DELIVERED. Une contrainte unique empêche un même compte client de publier deux
 avis sur le même produit. La réponse vendeur est stockée séparément du commentaire
 original afin de préserver l'intégrité du contenu client.
+
+
+## Cohérence support, vendeurs et newsletter
+
+La recette couvre maintenant l'inscription vendeur complète : email réellement reçu,
+choix du mot de passe après preuve de possession, refus des API vendeur tant que la
+boutique est en attente, approbation administrateur, email d'approbation et accès au
+dashboard après validation.
+
+Le formulaire de contact n'annonce plus un succès si SMTP échoue. Son audit ne
+conserve plus le corps du message, le téléphone ou l'adresse email en clair.
+La newsletter est persistée dans PostgreSQL avec état actif/désinscrit et la route
+utilisée par le frontend est testée. Les tickets support vendeur sont enregistrés
+durablement dans le journal d'audit et réellement annoncés au support par SMTP ;
+un échec de livraison est exposé comme tel au vendeur.
+
+Les notifications de traitement des versements vendeur utilisent désormais la
+fonction email réellement exportée, au lieu d'un appel vers un nom inexistant.

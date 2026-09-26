@@ -103,12 +103,17 @@ class BrowserAcceptance(unittest.TestCase):
             headers["Authorization"] = "Bearer " + token
         return self.context.request.fetch(BASE + path, method=method, headers=headers, data=data)
 
-    def login(self, email, password, staff=False):
+    def login(self, email, password, staff=False, expected_path=None):
         self.page.goto(BASE + ("/admin/login" if staff else "/compte/login"))
-        self.page.locator('form input[type="email"]').first.fill(email)
-        self.page.locator('form input[type="password"]').first.fill(password)
-        self.page.get_by_role("button", name="Se connecter", exact=True).click()
-        target = "/vendeur/dashboard" if email == "qa-seller@test.invalid" else "/admin/dashboard" if staff else "/compte/dashboard"
+        login_button = self.page.get_by_role("button", name="Se connecter", exact=True)
+        expect(login_button).to_be_visible()
+        # During client auth hydration the newsletter form is rendered before the
+        # login form. Select the form that owns the login button, never ".first".
+        form = self.page.locator("form").filter(has=login_button)
+        form.locator('input[type="email"]').fill(email)
+        form.locator('input[type="password"]').fill(password)
+        login_button.click()
+        target = expected_path or ("/vendeur/dashboard" if email == "qa-seller@test.invalid" else "/admin/dashboard" if staff else "/compte/dashboard")
         expect(self.page).to_have_url(re.compile(re.escape(BASE + target)))
         key = "admin_token" if staff else TOKEN_KEY
         self.page.wait_for_function("key => !!localStorage.getItem(key)", arg=key)
@@ -369,6 +374,75 @@ class BrowserAcceptance(unittest.TestCase):
         self.assertTrue(published["isVerified"])
         self.assertEqual(published["sellerReply"], "Merci pour votre retour vérifié.")
         self.assertFalse(any(item["id"] == spoof.json()["review"]["id"] for item in visible))
+
+
+    def test_11_seller_onboarding_email_approval_and_access(self):
+        email = "qa-new-seller@test.invalid"
+        self.page.goto(BASE + "/devenir-vendeur")
+        self.page.get_by_role("button", name=re.compile("Créer ma boutique gratuitement", re.I)).click()
+        self.page.locator('input[name="name"]').fill("Nouveau Vendeur QA")
+        self.page.locator('input[name="email"]').fill(email)
+        self.page.locator('input[name="password"]').fill(PASSWORD)
+        self.page.locator('input[name="storeName"]').fill("Nouvelle Boutique QA")
+        self.page.locator('textarea[name="description"]').fill("Boutique fictive pour la recette d'approbation.")
+        self.page.get_by_role("button", name="Créer ma boutique", exact=True).click()
+        expect(self.page).to_have_url(BASE + "/compte/verifier-email")
+
+        self.page.goto(mail_link(email, "/compte/verifier-email"))
+        seller_password = PASSWORD + "s"
+        self.page.get_by_label("Nouveau mot de passe").fill(seller_password)
+        self.page.get_by_role("button", name="Confirmer", exact=True).click()
+        expect(self.page.get_by_role("status")).to_contain_text("Adresse verifiee")
+
+        pending_login = self.api("/api/auth/login", method="POST", data={"email": email, "password": seller_password})
+        self.assertEqual(pending_login.status, 200)
+        pending_token = pending_login.json()["token"]
+        self.assertEqual(self.api("/api/sellers/me/profile", pending_token).status, 403)
+
+        self.page.evaluate("localStorage.clear()")
+        admin_token = self.login("qa-admin@test.invalid", PASSWORD, staff=True)
+        sellers = self.api("/api/sellers/admin/all?status=pending", admin_token)
+        self.assertEqual(sellers.status, 200)
+        candidate = next(item for item in sellers.json() if item["storeName"] == "Nouvelle Boutique QA")
+        approved = self.api(
+            f"/api/sellers/admin/{candidate['id']}/approve",
+            admin_token,
+            method="PUT",
+            data={"status": "approved", "commissionRate": 12},
+        )
+        self.assertEqual(approved.status, 200)
+        self.assertEqual(approved.json()["commissionRate"], 12)
+        self.assertTrue(mail_received(email, "est en ligne"))
+
+        self.page.evaluate("localStorage.clear()")
+        seller_token = self.login(email, seller_password, staff=True, expected_path="/vendeur/dashboard")
+        profile = self.api("/api/sellers/me/profile", seller_token)
+        self.assertEqual(profile.status, 200)
+        self.assertEqual(profile.json()["storeName"], "Nouvelle Boutique QA")
+
+    def test_12_contact_smtp_and_durable_newsletter(self):
+        self.page.goto(BASE + "/contact")
+        expect(self.page.get_by_role("heading", name="Nous sommes à votre écoute")).to_be_visible()
+        self.page.get_by_placeholder("Ex: Fatoumata Traoré").fill("Contact QA")
+        self.page.get_by_placeholder("Ex: fatoumata@exemple.com").fill("qa-contact@test.invalid")
+        self.page.get_by_placeholder("Ex: Suivi de livraison, partenariat...").fill("Question QA contact")
+        self.page.get_by_placeholder("Détaillez votre question ou demande...").fill(
+            "Message fictif de recette pour vérifier la livraison SMTP du support."
+        )
+        self.page.get_by_role("button", name="Envoyer mon message").click()
+        expect(self.page.get_by_role("heading", name="Message bien transmis !")).to_be_visible()
+        self.assertTrue(mail_received("qa-admin@test.invalid", "Question QA contact"))
+
+        newsletter = "qa-newsletter@test.invalid"
+        footer = self.page.locator("footer")
+        footer.get_by_placeholder("Votre adresse email").fill(newsletter)
+        footer.get_by_role("button", name="S’inscrire").click()
+        expect(footer.get_by_text("Merci pour votre inscription à la newsletter !")).to_be_visible()
+
+        unsub = self.api("/api/newsletter/unsubscribe", method="POST", data={"email": newsletter})
+        self.assertEqual(unsub.status, 200)
+        resub = self.api("/api/newsletter/subscribe", method="POST", data={"email": newsletter})
+        self.assertEqual(resub.status, 200)
 
 
 if __name__ == "__main__":

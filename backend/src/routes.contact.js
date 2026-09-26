@@ -1,4 +1,5 @@
 const express = require('express');
+const crypto = require('crypto');
 const router = express.Router();
 const { z } = require('zod');
 const db = require('./db');
@@ -25,31 +26,33 @@ router.post('/', async (req, res) => {
       return res.status(200).json({ success: true, message: 'Message reçu' });
     }
 
-    // Trace en audit log pour observabilité
-    await db.auditLog.create({
-      data: {
-        action: 'CONTACT_MESSAGE_RECEIVED',
-        entity: 'Contact',
-        entityId: data.email,
-        details: {
-          name: data.name,
-          email: data.email,
-          phone: data.phone,
-          subject: data.subject,
-          snippet: data.message.substring(0, 100),
-          ip: req.ip,
-        },
-      },
-    });
-
-    // Envoi de la notification par email au support
-    await emailService.sendContactMessageNotification({
+    const sent = await emailService.sendContactMessageNotification({
       name: data.name,
       email: data.email,
       phone: data.phone,
       subject: data.subject,
       message: data.message,
     });
+    if (!sent.success) {
+      console.error('[Contact] Livraison SMTP impossible:', sent.error || 'erreur inconnue');
+      return res.status(503).json({ error: 'Support temporairement indisponible. Réessayez plus tard.' });
+    }
+
+    // L'audit opérationnel ne conserve ni message, ni téléphone, ni email en clair.
+    try {
+      await db.auditLog.create({
+        data: {
+          action: 'CONTACT_MESSAGE_DELIVERED',
+          entity: 'Contact',
+          entityId: crypto.createHash('sha256').update(data.email.trim().toLowerCase()).digest('hex'),
+          details: { subject: data.subject, hasPhone: Boolean(data.phone), messageId: sent.messageId || null },
+          ipAddress: req.ip,
+          userAgent: req.headers['user-agent'] || null,
+        },
+      });
+    } catch (auditError) {
+      console.warn('[Contact] Email livré mais audit indisponible:', auditError.message);
+    }
 
     res.json({
       success: true,
@@ -64,64 +67,78 @@ router.post('/', async (req, res) => {
   }
 });
 
-// Schéma newsletter
+// Newsletter : consentement durable et désinscription idempotente.
 const newsletterSchema = z.object({
   email: z.string().email('Adresse email invalide'),
 });
 
-// In-memory / audit subscriber store
-// POST /api/newsletter/subscribe - Inscription newsletter
-router.post('/newsletter/subscribe', async (req, res) => {
+async function subscribeNewsletter(req, res) {
   try {
     const { email } = newsletterSchema.parse(req.body);
     const cleanEmail = email.trim().toLowerCase();
-
+    const now = new Date();
+    const subscriber = await db.newsletterSubscriber.upsert({
+      where: { email: cleanEmail },
+      create: { email: cleanEmail, status: 'active', source: 'website', consentedAt: now },
+      update: { status: 'active', source: 'website', consentedAt: now, unsubscribedAt: null },
+    });
     await db.auditLog.create({
       data: {
         action: 'NEWSLETTER_SUBSCRIBED',
-        entity: 'Newsletter',
-        entityId: cleanEmail,
-        details: { email: cleanEmail, ip: req.ip },
+        entity: 'NewsletterSubscriber',
+        entityId: subscriber.id,
+        details: { status: 'active', source: subscriber.source },
+        ipAddress: req.ip,
+        userAgent: req.headers['user-agent'] || null,
       },
     });
-
     res.json({
       success: true,
       message: 'Merci ! Votre inscription à la newsletter MandeMarket a été prise en compte.',
     });
   } catch (err) {
-    if (err.name === 'ZodError') {
-      return res.status(400).json({ error: 'Adresse email invalide' });
-    }
+    if (err.name === 'ZodError') return res.status(400).json({ error: 'Adresse email invalide' });
+    console.error('[Newsletter] Erreur inscription:', err);
     res.status(500).json({ error: 'Erreur serveur lors de l’inscription' });
   }
-});
+}
 
-// POST /api/newsletter/unsubscribe - Désinscription newsletter
-router.post('/newsletter/unsubscribe', async (req, res) => {
+async function unsubscribeNewsletter(req, res) {
   try {
     const { email } = newsletterSchema.parse(req.body);
     const cleanEmail = email.trim().toLowerCase();
-
-    await db.auditLog.create({
-      data: {
-        action: 'NEWSLETTER_UNSUBSCRIBED',
-        entity: 'Newsletter',
-        entityId: cleanEmail,
-        details: { email: cleanEmail },
-      },
-    });
-
+    const subscriber = await db.newsletterSubscriber.findUnique({ where: { email: cleanEmail } });
+    if (subscriber) {
+      await db.newsletterSubscriber.update({
+        where: { id: subscriber.id },
+        data: { status: 'unsubscribed', unsubscribedAt: new Date() },
+      });
+      await db.auditLog.create({
+        data: {
+          action: 'NEWSLETTER_UNSUBSCRIBED',
+          entity: 'NewsletterSubscriber',
+          entityId: subscriber.id,
+          details: { status: 'unsubscribed' },
+          ipAddress: req.ip,
+          userAgent: req.headers['user-agent'] || null,
+        },
+      });
+    }
+    // Réponse neutre : ne révèle pas si l'adresse était inscrite.
     res.json({
       success: true,
-      message: 'Votre adresse a été retirée de notre liste de diffusion.',
+      message: 'Si cette adresse était inscrite, elle a été retirée de notre liste de diffusion.',
     });
   } catch (err) {
-    if (err.name === 'ZodError') {
-      return res.status(400).json({ error: 'Adresse email invalide' });
-    }
+    if (err.name === 'ZodError') return res.status(400).json({ error: 'Adresse email invalide' });
+    console.error('[Newsletter] Erreur désinscription:', err);
     res.status(500).json({ error: 'Erreur serveur lors de la désinscription' });
   }
-});
+}
+
+// L'ancien montage /api/contact/newsletter/* reste accepté, tandis que le frontend
+// utilise /api/newsletter/subscribe et /api/newsletter/unsubscribe.
+router.post(['/subscribe', '/newsletter/subscribe'], subscribeNewsletter);
+router.post(['/unsubscribe', '/newsletter/unsubscribe'], unsubscribeNewsletter);
 
 module.exports = router;

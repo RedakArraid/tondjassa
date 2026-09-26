@@ -850,43 +850,61 @@ router.get('/me/support/tickets', requireAuth, requireSeller, async (req, res) =
 // POST /api/sellers/me/support/tickets - Ouvrir un ticket support
 router.post('/me/support/tickets', requireAuth, requireSeller, async (req, res) => {
   try {
-    const { category, subject, message } = req.body;
-    if (!subject || !message) {
-      return res.status(400).json({ error: 'Sujet et message requis' });
-    }
+    const input = z.object({
+      category: z.string().trim().max(100).optional(),
+      subject: z.string().trim().min(3).max(160),
+      message: z.string().trim().min(10).max(5000),
+    }).parse(req.body);
 
     const ticketId = `T-${Date.now().toString(36).toUpperCase().slice(-6)}`;
-
+    const details = {
+      category: input.category || 'Autre',
+      subject: input.subject,
+      message: input.message,
+      status: 'PENDING_DELIVERY',
+      storeName: req.seller.storeName,
+      storeSlug: req.seller.slug,
+      responses: [],
+    };
     const log = await db.auditLog.create({
       data: {
         userId: req.user.userId,
         action: 'SUPPORT_TICKET_CREATED',
         entity: 'SupportTicket',
         entityId: ticketId,
-        details: {
-          category: category || 'Autre',
-          subject: subject.trim(),
-          message: message.trim(),
-          status: 'OPEN',
-          storeName: req.seller.storeName,
-          storeSlug: req.seller.slug,
-          responses: [
-            {
-              sender: 'SYSTEM',
-              text: 'Votre ticket a été pris en compte par l’équipe support MandeMarket. Un agent vous répondra sous 24h.',
-              date: new Date().toISOString(),
-            }
-          ],
-        },
+        details,
+        ipAddress: req.ip,
+        userAgent: req.headers['user-agent'] || null,
       },
     });
 
+    const sellerUser = await db.user.findUnique({
+      where: { id: req.user.userId },
+      select: { email: true, name: true },
+    });
+    const emailService = require('./services/email.service');
+    const delivered = await emailService.sendContactMessageNotification({
+      name: `${sellerUser?.name || req.seller.storeName} — ${req.seller.storeName}`,
+      email: sellerUser?.email || 'vendeur@mandemarket.invalid',
+      subject: `[Ticket ${ticketId}] ${input.subject}`,
+      message: input.message,
+    });
+
+    const status = delivered.success ? 'OPEN' : 'DELIVERY_FAILED';
+    await db.auditLog.update({
+      where: { id: log.id },
+      data: { details: { ...details, status, messageId: delivered.messageId || null } },
+    });
+    if (!delivered.success) {
+      return res.status(503).json({ error: 'Support temporairement indisponible. Le ticket n’a pas été annoncé à l’équipe.' });
+    }
+
     res.status(201).json({
       id: ticketId,
-      category,
-      subject,
-      message,
-      status: 'OPEN',
+      category: details.category,
+      subject: input.subject,
+      message: input.message,
+      status,
       createdAt: log.createdAt,
     });
   } catch (error) {
@@ -1051,7 +1069,7 @@ router.delete('/me/promotions/:id', requireAuth, requireSeller, async (req, res)
   }
 });
 
-// ==================== PARAMÈTRES, ÉQUIPE & BOUTIQUE (MM-BE-064) ====================// ==================== PARAMÈTRES, ÉQUIPE & BOUTIQUE (MM-BE-064) ====================
+// ==================== PARAMÈTRES, ÉQUIPE & BOUTIQUE (MM-BE-064) ====================
 
 // GET /api/sellers/me/settings
 router.get('/me/settings', requireAuth, requireSeller, async (req, res) => {
@@ -1316,11 +1334,8 @@ router.post('/admin/payouts/:id/process', requireAuth, requireAdmin, async (req,
       });
       if (sellerWithUser?.user?.email) {
         const emailService = require('./services/email.service');
-        emailService.sendPayoutStatusNotification(sellerWithUser.user.email, {
-          amount: updated.amount,
-          status,
-          reference: reference || updated.reference,
-        }).catch(e => console.warn('[Email] Notification payout échouée:', e.message));
+        const sent = await emailService.sendPayoutStatusEmail(sellerWithUser, updated, status);
+        if (!sent.success) console.warn('[Email] Notification payout échouée:', sent.error || 'erreur inconnue');
       }
     } catch (err) {
       console.warn('[Email] Erreur lookup vendeur pour notification payout:', err.message);
@@ -1352,11 +1367,8 @@ router.post('/admin/payouts/:id/fail', requireAuth, requireAdmin, async (req, re
       });
       if (sellerWithUser?.user?.email) {
         const emailService = require('./services/email.service');
-        emailService.sendPayoutStatusNotification(sellerWithUser.user.email, {
-          amount: updated.amount,
-          status: 'failed',
-          reference: reason || 'Demande de retrait refusée',
-        }).catch(e => console.warn('[Email] Notification rejet payout échouée:', e.message));
+        const sent = await emailService.sendPayoutStatusEmail(sellerWithUser, updated, 'rejected');
+        if (!sent.success) console.warn('[Email] Notification rejet payout échouée:', sent.error || 'erreur inconnue');
       }
     } catch (err) {
       console.warn('[Email] Erreur lookup vendeur pour notification rejet payout:', err.message);

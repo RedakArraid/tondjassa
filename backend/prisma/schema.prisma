@@ -501,6 +501,20 @@ model AuditLog {
   @@index([createdAt])
 }
 
+// ===== ABONNÉS NEWSLETTER =====
+model NewsletterSubscriber {
+  id             String    @id @default(uuid())
+  email          String    @unique
+  status         String    @default("active")
+  source         String    @default("website")
+  consentedAt    DateTime  @default(now())
+  unsubscribedAt DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@index([status])
+}
+
 // ===== ENUMS =====
 enum UserRole {
   user
