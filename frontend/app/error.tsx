@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect } from 'react';
+import Link from 'next/link';
 
 export default function ErrorPage({
   error,
@@ -26,9 +27,9 @@ export default function ErrorPage({
           <button type="button" onClick={reset} className="rounded-xl bg-orange-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-orange-700">
             Réessayer
           </button>
-          <a href="/" className="rounded-xl border border-gray-300 px-5 py-2.5 text-sm font-semibold text-gray-700 hover:bg-gray-50">
+          <Link href="/" className="rounded-xl border border-gray-300 px-5 py-2.5 text-sm font-semibold text-gray-700 hover:bg-gray-50">
             Retour à l’accueil
-          </a>
+          </Link>
         </div>
       </section>
     </main>

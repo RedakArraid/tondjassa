@@ -236,7 +236,12 @@ export default function CouponsPage() {
   };
 
   const duplicate = async (c: Coupon) => {
-    const copyCode = `${c.code.slice(0, 8)}${Math.floor(Math.random() * 900 + 100)}`;
+    let copyIndex = 1;
+    let copyCode = `${c.code.slice(0, 12)}-${copyIndex}`;
+    while (coupons.some((coupon) => coupon.code === copyCode)) {
+      copyIndex += 1;
+      copyCode = `${c.code.slice(0, 12)}-${copyIndex}`;
+    }
     try {
       await SellerService.createPromotion({
         code: copyCode,
