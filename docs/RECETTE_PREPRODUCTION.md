@@ -67,3 +67,16 @@ Le parcours vendeur couvre désormais la duplication d'un produit et la mise à 
 du stock, puis vérifie la projection serveur. Le parcours administrateur vérifie la
 visibilité de la boutique et l'accès au journal d'audit. Une panne API ne déclenche
 plus l'affichage de faux produits ou de catégories de démonstration côté frontend.
+
+
+## Cohérence des fonctions vendeur
+
+Les codes promo vendeur sont maintenant liés à leur boutique, ne réduisent que ses
+articles et recalculent commission/revenu sur le montant remisé. Les promotions
+globales restent administratives. L'interface vendeur n'expose que pourcentage et
+montant fixe, les deux modes réellement supportés avec cette comptabilité.
+
+La messagerie vendeur transmet réellement l'email via le SMTP configuré et refuse
+une adresse qui n'appartient pas à un acheteur de la boutique. Les invitations de
+collaborateurs sont explicitement indisponibles tant qu'un vrai modèle de membres
+et permissions n'existe pas : aucun faux email d'invitation n'est annoncé.

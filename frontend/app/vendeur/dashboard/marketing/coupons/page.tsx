@@ -48,65 +48,13 @@ const COUPON_TYPES: {
   description: string;
   defaultCode: string;
 }[] = [
-  {
-    id: 'PERCENTAGE',
-    label: 'Réduction en %',
-    example: 'PROMO20 → -20 %',
-    description: 'Réduction d’un pourcentage sur le montant',
-    defaultCode: 'PROMO20',
-  },
-  {
-    id: 'FIXED_AMOUNT',
-    label: 'Montant fixe',
-    example: 'CADEAU5000 → -5 000 FCFA',
-    description: 'Retire une somme fixe',
-    defaultCode: 'CADEAU5000',
-  },
-  {
-    id: 'FREE_SHIPPING',
-    label: 'Livraison gratuite',
-    example: 'LIVRAISON0',
-    description: 'Supprime les frais de livraison',
-    defaultCode: 'LIVRAISON0',
-  },
-  {
-    id: 'PRODUCT_PERCENTAGE',
-    label: 'Réduction sur un produit',
-    example: 'SAC30 → -30 %',
-    description: 'Valable uniquement sur certains produits',
-    defaultCode: 'SAC30',
-  },
-  {
-    id: 'CATEGORY_PERCENTAGE',
-    label: 'Réduction sur une catégorie',
-    example: 'MODE15 → -15 %',
-    description: 'Applicable à toute une catégorie',
-    defaultCode: 'MODE15',
-  },
-  {
-    id: 'BUY_X_GET_Y',
-    label: 'Achetez X, obtenez Y',
-    example: '2+1',
-    description: '2 produits achetés = 1 offert',
-    defaultCode: '2PLUS1',
-  },
-  {
-    id: 'FIRST_ORDER',
-    label: 'Première commande',
-    example: 'BIENVENUE10',
-    description: 'Réservé aux nouveaux clients',
-    defaultCode: 'BIENVENUE10',
-  },
-  {
-    id: 'SUBSCRIBERS',
-    label: 'Coupon abonnés',
-    example: 'FAN20',
-    description: 'Réservé aux personnes qui suivent la boutique',
-    defaultCode: 'FAN20',
-  },
+  { id: 'PERCENTAGE', label: 'Réduction en %', example: 'PROMO20 → -20 %',
+    description: 'Réduction financée par votre boutique, appliquée uniquement à vos articles.', defaultCode: 'PROMO20' },
+  { id: 'FIXED_AMOUNT', label: 'Montant fixe', example: 'CADEAU5000 → -5 000 FCFA',
+    description: 'Montant financé par votre boutique, appliqué uniquement à vos articles.', defaultCode: 'CADEAU5000' },
 ];
 
-function typeMeta(id: CouponTypeId) {
+function typeMetafunction typeMeta(id: CouponTypeId) {
   return COUPON_TYPES.find((t) => t.id === id) || COUPON_TYPES[0];
 }
 
@@ -165,7 +113,7 @@ export default function CouponsPage() {
             id: p.id,
             code: p.code,
             type: (p.type as CouponTypeId) || 'PERCENTAGE',
-            value: p.value,
+            value: p.type === 'FIXED_AMOUNT' ? Math.round((p.value || 0) / 100) : p.value,
             minAmount: Math.round((p.minAmount || 0) / 100),
             maxUses: p.maxUses || 100,
             startDate: p.startDate ? p.startDate.slice(0, 10) : '',
@@ -262,8 +210,9 @@ export default function CouponsPage() {
         name: `Promotion ${form.code}`,
         type: form.type === 'FREE_SHIPPING' ? 'FREE_SHIPPING' : (form.type === 'FIXED_AMOUNT' ? 'FIXED_AMOUNT' : 'PERCENTAGE'),
         value: Number(form.value) || 0,
-        minAmount: form.minAmount ? Math.round(Number(form.minAmount) * 100) : undefined,
+        minAmount: form.minAmount ? Number(form.minAmount) : undefined,
         maxUses: form.maxUses ? Number(form.maxUses) : undefined,
+        startDate: form.startDate || undefined,
         endDate: form.endDate || undefined,
       });
       setFeedback({ type: 'success', message: `Code promo ${form.code.toUpperCase()} activé avec succès.` });
@@ -313,7 +262,7 @@ export default function CouponsPage() {
     <div className="space-y-4">
       <SellerPageHeader
         title="Coupons"
-        description="Créez des codes promo adaptés à chaque type d’offre MandeMarket."
+        description="Créez des réductions financées par votre boutique, limitées à vos propres articles."
         action={
           <SellerActionButton variant="primary" onClick={() => openCreate()}>
             + Créer un coupon

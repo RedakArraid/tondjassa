@@ -933,31 +933,35 @@ router.get('/me/customers', requireAuth, requireSeller, async (req, res) => {
   }
 });
 
-// POST /api/sellers/me/messages/send - Envoyer un message à un client
+// POST /api/sellers/me/messages/send - Envoyer réellement un email à un client de la boutique.
 router.post('/me/messages/send', requireAuth, requireSeller, async (req, res) => {
   try {
-    const { customerEmail, subject, content } = req.body;
-    if (!customerEmail || !content) {
-      return res.status(400).json({ error: 'Email client et message requis' });
-    }
-
-    // Logger le message envoyé dans AuditLog
+    const data = z.object({
+      customerEmail: z.string().trim().toLowerCase().email(),
+      subject: z.string().trim().min(1).max(160),
+      content: z.string().trim().min(1).max(5000),
+    }).parse(req.body);
+    const customer = await db.customer.findFirst({
+      where: { email: data.customerEmail, orders: { some: { items: { some: { sellerId: req.seller.id } } } } },
+      select: { id: true, email: true, firstName: true },
+    });
+    if (!customer) return res.status(404).json({ error: 'Client introuvable pour cette boutique.' });
+    const emailService = require('./services/email.service');
+    const sent = await emailService.sendSellerCustomerMessage({
+      to: customer.email, customerName: customer.firstName, storeName: req.seller.storeName,
+      subject: data.subject, message: data.content,
+    });
+    if (!sent.success) return res.status(503).json({ error: 'Envoi email temporairement indisponible.' });
     await db.auditLog.create({
       data: {
-        userId: req.user.userId,
-        action: 'SELLER_MESSAGE_SENT',
-        entity: 'CustomerMessage',
-        details: {
-          recipientEmail: customerEmail,
-          subject: subject || `Message de ${req.seller.storeName}`,
-          content: content.trim(),
-          sentAt: new Date().toISOString(),
-        },
+        userId: req.user.userId, action: 'SELLER_MESSAGE_SENT', entity: 'CustomerMessage', entityId: customer.id,
+        details: { recipientEmail: customer.email, subject: data.subject, messageId: sent.messageId || null },
+        ipAddress: req.ip, userAgent: req.headers['user-agent'] || null,
       },
     });
-
-    res.json({ success: true, message: 'Message enregistré et transmis au client.' });
+    res.json({ success: true, message: 'Message envoyé au client.' });
   } catch (error) {
+    if (error.name === 'ZodError') return res.status(400).json({ error: 'Message invalide', details: error.errors });
     console.error('Erreur envoi message client:', error);
     res.status(500).json({ error: 'Erreur serveur' });
   }
@@ -965,11 +969,22 @@ router.post('/me/messages/send', requireAuth, requireSeller, async (req, res) =>
 
 // ==================== MARKETING & PROMOTIONS (MM-BE-063) ====================
 
-// GET /api/sellers/me/promotions - Codes promos & promotions actives
+const sellerPromotionSchema = z.object({
+  code: z.string().trim().min(3).max(20).regex(/^[A-Za-z0-9_-]+$/),
+  name: z.string().trim().min(1).max(100),
+  description: z.string().trim().max(500).optional(),
+  type: z.enum(['PERCENTAGE', 'FIXED_AMOUNT']),
+  value: z.coerce.number().positive(),
+  minAmount: z.coerce.number().min(0).optional(),
+  maxUses: z.coerce.number().int().positive().max(100000).optional(),
+  startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  endDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+});
+
 router.get('/me/promotions', requireAuth, requireSeller, async (req, res) => {
   try {
     const promos = await db.promotion.findMany({
-      where: { isActive: true },
+      where: { sellerId: req.seller.id },
       orderBy: { createdAt: 'desc' },
     });
     res.json(promos);
@@ -979,56 +994,67 @@ router.get('/me/promotions', requireAuth, requireSeller, async (req, res) => {
   }
 });
 
-// POST /api/sellers/me/promotions - Créer une promotion vendeur
 router.post('/me/promotions', requireAuth, requireSeller, async (req, res) => {
   try {
-    const { code, name, description, type, value, minAmount, maxUses, endDate } = req.body;
-    if (!code || !name || !value) {
-      return res.status(400).json({ error: 'Code, libellé et valeur requis' });
+    const input = sellerPromotionSchema.parse(req.body);
+    const code = input.code.toUpperCase();
+    if (input.type === 'PERCENTAGE' && input.value > 100) {
+      return res.status(400).json({ error: 'Le pourcentage doit être compris entre 1 et 100.' });
     }
-
-    const cleanCode = code.trim().toUpperCase();
-    const existing = await db.promotion.findUnique({ where: { code: cleanCode } });
-    if (existing) {
-      return res.status(409).json({ error: 'Ce code promo existe déjà' });
+    const startDate = input.startDate ? new Date(`${input.startDate}T00:00:00.000Z`) : new Date();
+    const endDate = input.endDate ? new Date(`${input.endDate}T23:59:59.999Z`) : new Date(Date.now() + 30 * 86400000);
+    if (!Number.isFinite(startDate.getTime()) || !Number.isFinite(endDate.getTime()) || endDate <= startDate) {
+      return res.status(400).json({ error: 'Période de promotion invalide.' });
     }
-
+    if (await db.promotion.findUnique({ where: { code } })) {
+      return res.status(409).json({ error: 'Ce code promo existe déjà.' });
+    }
     const promo = await db.promotion.create({
       data: {
-        code: cleanCode,
-        name: name.trim(),
-        description: description || `Promotion ${req.seller.storeName}`,
-        type: type || 'PERCENTAGE',
-        value: parseInt(value, 10),
-        minAmount: minAmount ? Math.round(Number(minAmount) * 100) : null,
-        maxUses: maxUses ? parseInt(maxUses, 10) : null,
-        startDate: new Date(),
-        endDate: endDate ? new Date(endDate) : new Date(Date.now() + 30 * 86400000),
+        sellerId: req.seller.id,
+        code,
+        name: input.name,
+        description: input.description || `Promotion ${req.seller.storeName}`,
+        type: input.type,
+        value: input.type === 'FIXED_AMOUNT' ? Math.round(input.value * 100) : Math.round(input.value),
+        minAmount: input.minAmount ? Math.round(input.minAmount * 100) : null,
+        maxUses: input.maxUses || null,
+        startDate,
+        endDate,
         isActive: true,
       },
     });
-
+    await db.auditLog.create({
+      data: { userId: req.user.userId, action: 'SELLER_PROMOTION_CREATED', entity: 'Promotion', entityId: promo.id,
+        details: { sellerId: req.seller.id, code: promo.code, type: promo.type }, ipAddress: req.ip },
+    });
     res.status(201).json(promo);
   } catch (error) {
-    console.error('Erreur création promo:', error);
+    if (error.name === 'ZodError') return res.status(400).json({ error: 'Promotion invalide', details: error.errors });
+    console.error('Erreur création promo vendeur:', error);
     res.status(500).json({ error: 'Erreur lors de la création de la promotion' });
   }
 });
 
-// DELETE /api/sellers/me/promotions/:id - Désactiver un code promo
 router.delete('/me/promotions/:id', requireAuth, requireSeller, async (req, res) => {
   try {
-    await db.promotion.update({
-      where: { id: req.params.id },
+    const result = await db.promotion.updateMany({
+      where: { id: req.params.id, sellerId: req.seller.id, isActive: true },
       data: { isActive: false },
+    });
+    if (result.count !== 1) return res.status(404).json({ error: 'Promotion introuvable.' });
+    await db.auditLog.create({
+      data: { userId: req.user.userId, action: 'SELLER_PROMOTION_DISABLED', entity: 'Promotion', entityId: req.params.id,
+        details: { sellerId: req.seller.id }, ipAddress: req.ip },
     });
     res.json({ success: true });
   } catch (error) {
+    console.error('Erreur désactivation code vendeur:', error);
     res.status(500).json({ error: 'Erreur désactivation code' });
   }
 });
 
-// ==================== PARAMÈTRES, ÉQUIPE & BOUTIQUE (MM-BE-064) ====================
+// ==================== PARAMÈTRES, ÉQUIPE & BOUTIQUE (MM-BE-064) ====================// ==================== PARAMÈTRES, ÉQUIPE & BOUTIQUE (MM-BE-064) ====================
 
 // GET /api/sellers/me/settings
 router.get('/me/settings', requireAuth, requireSeller, async (req, res) => {
@@ -1074,12 +1100,9 @@ router.get('/me/team', requireAuth, requireSeller, async (req, res) => {
   res.json([owner]);
 });
 
-// POST /api/sellers/me/team/invite - Inviter un collaborateur
+// Team membership needs a real membership/permission model; never fake an invitation.
 router.post('/me/team/invite', requireAuth, requireSeller, async (req, res) => {
-  const { email, role } = req.body;
-  if (!email) return res.status(400).json({ error: 'Email requis' });
-  // Simuler confirmation invitation
-  res.json({ success: true, message: `Invitation envoyée avec succès à ${email} pour le rôle ${role || 'Gestionnaire'}.` });
+  res.status(501).json({ error: 'Les comptes collaborateurs ne sont pas encore activés. Aucun email d’invitation n’a été envoyé.' });
 });
 
 // GET /api/sellers/me/balance - 4 soldes réels du vendeur (MM-BE-052 / MM-FE-050)

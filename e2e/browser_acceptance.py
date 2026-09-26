@@ -29,6 +29,19 @@ TOKEN_KEY = "mandemarket_customer_token"
 EXTERNAL = re.compile(r"^https?://(?!localhost:3443(?:/|$))")
 
 
+def mail_received(address, subject_fragment):
+    until = time.monotonic() + 30
+    while time.monotonic() < until:
+        with urllib.request.urlopen(MAIL + "/api/v1/messages", timeout=5) as response:
+            messages = json.load(response).get("messages", [])
+        for message in messages:
+            recipients = message.get("To", [])
+            if any(recipient.get("Address") == address for recipient in recipients) and subject_fragment.lower() in message.get("Subject", "").lower():
+                return True
+        time.sleep(0.25)
+    return False
+
+
 def mail_link(address, path):
     """Read an actual SMTP-captured message, never a token from the database."""
     until = time.monotonic() + 30
@@ -254,6 +267,25 @@ class BrowserAcceptance(unittest.TestCase):
         )
         self.assertEqual(stock.status, 200)
         self.assertEqual(stock.json()["stock"], 7)
+
+        promo = self.api("/api/sellers/me/promotions", token, method="POST",
+                         data={"code": "QA10", "name": "QA 10%", "type": "PERCENTAGE", "value": 10, "minAmount": 0, "maxUses": 20})
+        self.assertEqual(promo.status, 201)
+        listed = self.api("/api/sellers/me/promotions", token)
+        self.assertEqual(listed.status, 200)
+        self.assertTrue(any(item["code"] == "QA10" for item in listed.json()))
+
+        message = self.api("/api/sellers/me/messages/send", token, method="POST",
+                           data={"customerEmail": "qa-guest@test.invalid", "subject": "Suivi QA vendeur",
+                                 "content": "Votre commande de recette est bien prise en charge."})
+        self.assertEqual(message.status, 200)
+        self.assertTrue(mail_received("qa-guest@test.invalid", "Suivi QA vendeur"))
+
+        team = self.api("/api/sellers/me/team", token)
+        self.assertEqual(team.status, 200)
+        invite = self.api("/api/sellers/me/team/invite", token, method="POST",
+                          data={"email": "collab@test.invalid", "role": "manager"})
+        self.assertEqual(invite.status, 501)
 
     def test_09_admin_marketplace_and_audit(self):
         token = self.login("qa-admin@test.invalid", PASSWORD, staff=True)

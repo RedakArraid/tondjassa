@@ -136,6 +136,35 @@ describe('PricingService — Calcul de Devis Déterministe (MM-QA-090)', () => {
       expect(quote.appliedPromotion.code).toBe('PROMO10');
     });
 
+    it('applique une promotion vendeur uniquement à ses lignes et recalcule ses commissions', async () => {
+      db.product.findUnique
+        .mockResolvedValueOnce({
+          id: 31, name: 'Produit vendeur A', price: 1000000, status: 'active', sellerId: 'seller-a',
+          seller: { status: 'approved', commissionRate: 10 }, inventory: { quantity: 10, reserved: 0 },
+        })
+        .mockResolvedValueOnce({
+          id: 32, name: 'Produit vendeur B', price: 1000000, status: 'active', sellerId: 'seller-b',
+          seller: { status: 'approved', commissionRate: 10 }, inventory: { quantity: 10, reserved: 0 },
+        });
+      db.promotion.findUnique.mockResolvedValue({
+        id: 'seller-promo', sellerId: 'seller-a', code: 'SELLER20', name: 'Vendeur A -20%',
+        type: 'PERCENTAGE', value: 20, isActive: true,
+        startDate: new Date(Date.now() - 86400000), endDate: new Date(Date.now() + 86400000),
+        maxUses: 100, usedCount: 0, minAmount: null,
+      });
+      const quote = await PricingService.calculateQuote({
+        items: [{ productId: 31, quantity: 1 }, { productId: 32, quantity: 1 }],
+        country: 'CI', shippingMethod: 'STANDARD', promoCode: 'SELLER20',
+      });
+      expect(quote.discountAmount).toBe(200000);
+      expect(quote.appliedPromotion.sellerId).toBe('seller-a');
+      expect(quote.items[0].commissionAmount).toBe(80000);
+      expect(quote.items[0].sellerEarnings).toBe(720000);
+      expect(quote.items[1].commissionAmount).toBe(100000);
+      expect(quote.items[1].sellerEarnings).toBe(900000);
+      expect(quote.totalAmount).toBe(2000000);
+    });
+
     it('ignore un code promo expiré', async () => {
       db.product.findUnique.mockResolvedValue({
         id: 20,

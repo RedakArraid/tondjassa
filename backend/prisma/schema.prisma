@@ -51,6 +51,7 @@ model Seller {
   orderItems     OrderItem[]
   payouts        SellerPayout[]
   ledgerEntries  SellerLedgerEntry[]
+  promotions     Promotion[]
   createdAt      DateTime            @default(now())
   updatedAt      DateTime            @updatedAt
 
@@ -324,6 +325,8 @@ model Shipping {
 // ===== PROMOTIONS =====
 model Promotion {
   id          String                @id @default(uuid())
+  sellerId    String?
+  seller      Seller?               @relation(fields: [sellerId], references: [id], onDelete: Cascade)
   code        String                @unique
   name        String
   description String
@@ -341,6 +344,7 @@ model Promotion {
 
   @@index([code])
   @@index([isActive])
+  @@index([sellerId, isActive])
 }
 
 // ===== UTILISATIONS DE PROMOTION (MM-BE-032) =====

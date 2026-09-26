@@ -20,6 +20,21 @@ test('new-order notification is exported, delivered to configured admin and HTML
   expect(message.html).not.toContain('#token=');
   expect(nodemailer.createTransport).toHaveBeenCalledWith(expect.objectContaining({ requireTLS: true }));
 });
+test('seller customer message escapes seller-controlled content', async () => {
+  await email.sendSellerCustomerMessage({
+    to: 'customer@test.invalid',
+    customerName: '<Client>',
+    storeName: '<Boutique>',
+    subject: 'Commande <script>',
+    message: 'Bonjour <img src=x onerror=alert(1)>',
+  });
+  const message = sendMail.mock.calls[0][0];
+  expect(message.to).toBe('customer@test.invalid');
+  expect(message.html).toContain('&lt;img src=x onerror=alert(1)&gt;');
+  expect(message.html).not.toContain('<img src=x onerror=alert(1)>');
+  expect(message.subject).not.toContain('<Boutique>');
+});
+
 test('unpaid order receipt does not announce a confirmed payment', async () => {
   await email.sendOrderConfirmation({ email: 'guest@test.invalid', firstName: 'QA' }, { id: 'test-order', totalAmount: 100000, status: 'PENDING', items: [] });
   expect(sendMail.mock.calls[0][0].subject).toContain('enregistree');

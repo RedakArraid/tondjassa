@@ -29,7 +29,8 @@ function MessagesContent() {
             setSelectedCustomer(matched);
             setSubject(`À propos de votre commande récente`);
           } else {
-            setSelectedCustomer({ email: prefilledCustomer, name: prefilledCustomer });
+            setSelectedCustomer(null);
+            setFeedback({ type: 'error', message: 'Ce client ne fait pas partie des acheteurs de votre boutique.' });
           }
         }
       })
@@ -50,7 +51,7 @@ function MessagesContent() {
         subject: subject.trim() || 'Message de votre vendeur MandeMarket',
         content: content.trim(),
       });
-      setFeedback({ type: 'success', message: `Message transmis à ${selectedCustomer.name || selectedCustomer.email} avec succès.` });
+      setFeedback({ type: 'success', message: `Email envoyé à ${selectedCustomer.name || selectedCustomer.email} avec succès.` });
       setContent('');
       setSubject('');
     } catch (err: any) {
