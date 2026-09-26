@@ -26,6 +26,7 @@ services:
       DATABASE_URL: postgresql://postgres:ci-only-password@postgres:5432/tondjassa_smoke_test
       REDIS_URL: redis://:ci-only-password@redis:6379
       JWT_SECRET: ${CI_JWT_SECRET:?CI_JWT_SECRET required}
+      METRICS_TOKEN: ${CI_METRICS_TOKEN:?CI_METRICS_TOKEN required}
       TRUST_PROXY: loopback
       CHECKOUT_COUNTRIES: CI
       CORS_ORIGIN: https://shop.test.invalid
@@ -38,6 +39,15 @@ services:
       CLOUDINARY_API_KEY: ci-placeholder
       CLOUDINARY_API_SECRET: ci-placeholder
     ports: ['127.0.0.1:4002:4002']
+    read_only: true
+    security_opt: ['no-new-privileges:true']
+    cap_drop: ['ALL']
+    pids_limit: 256
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m,mode=1777
+      - /app/tmp:rw,noexec,nosuid,size=32m,uid=1001,gid=1001,mode=0770,mode=1777
+      - /app/uploads:rw,noexec,nosuid,size=32m,uid=1001,gid=1001,mode=0770
+      - /app/logs:rw,noexec,nosuid,size=16m,uid=1001,gid=1001,mode=0770
     depends_on:
       postgres: { condition: service_healthy }
       redis: { condition: service_healthy }
@@ -52,6 +62,15 @@ services:
       <<: *app_env
       RUN_MIGRATIONS: 'false'
     command: [node, scripts/worker.js]
+    read_only: true
+    security_opt: ['no-new-privileges:true']
+    cap_drop: ['ALL']
+    pids_limit: 128
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=32m,mode=1777
+      - /app/tmp:rw,noexec,nosuid,size=32m,uid=1001,gid=1001,mode=0770,mode=1777
+      - /app/uploads:rw,noexec,nosuid,size=16m,uid=1001,gid=1001,mode=0770
+      - /app/logs:rw,noexec,nosuid,size=16m,uid=1001,gid=1001,mode=0770
     depends_on:
       backend: { condition: service_healthy }
     healthcheck:
@@ -66,6 +85,13 @@ services:
       HOSTNAME: 0.0.0.0
       INTERNAL_API_URL: http://backend:4002
     ports: ['127.0.0.1:3000:3000']
+    read_only: true
+    security_opt: ['no-new-privileges:true']
+    cap_drop: ['ALL']
+    pids_limit: 256
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m,mode=1777
+      - /app/.next/cache:rw,noexec,nosuid,size=64m,uid=1001,gid=1001,mode=0770
     depends_on:
       backend: { condition: service_healthy }
     healthcheck:

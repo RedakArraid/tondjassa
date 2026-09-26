@@ -58,7 +58,16 @@ function isOriginAllowed(origin) {
 app.use(
   helmet({
     crossOriginResourcePolicy: { policy: 'cross-origin' },
-    contentSecurityPolicy: false,
+    contentSecurityPolicy: {
+      useDefaults: false,
+      directives: {
+        defaultSrc: ["'none'"],
+        baseUri: ["'none'"],
+        formAction: ["'none'"],
+        frameAncestors: ["'none'"],
+      },
+    },
+    hsts: isProd ? { maxAge: 31536000, includeSubDomains: true, preload: true } : false,
   })
 );
 app.use(compression());
@@ -66,18 +75,39 @@ app.use(compression());
 const crypto = require('crypto');
 const db = require('./db');
 const RedisService = require('./services/redis.service');
+const Metrics = require('./services/metrics.service');
+const APP_VERSION = require('../package.json').version;
+
+function secureTokenEqual(candidate, expected) {
+  if (typeof candidate !== 'string' || typeof expected !== 'string') return false;
+  const a = Buffer.from(candidate);
+  const b = Buffer.from(expected);
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
+
+function requireOpsToken(req, res, next) {
+  const header = typeof req.headers.authorization === 'string' ? req.headers.authorization : '';
+  const candidate = header.startsWith('Bearer ') ? header.slice(7) : '';
+  if (!config.METRICS_TOKEN || !secureTokenEqual(candidate, config.METRICS_TOKEN)) {
+    return res.status(404).json({ error: 'Route non trouvée' });
+  }
+  return next();
+}
 
 // Middleware RequestId & Observabilité (MM-INF-091)
 app.use((req, res, next) => {
   req.id = typeof req.headers['x-request-id'] === 'string' && /^[a-zA-Z0-9_-]{1,100}$/.test(req.headers['x-request-id']) ? req.headers['x-request-id'] : crypto.randomUUID();
   res.setHeader('X-Request-ID', req.id);
   const start = Date.now();
+  const finishMetric = Metrics.begin(req.method);
 
   res.on('finish', () => {
     const durationMs = Date.now() - start;
+    finishMetric(res.statusCode, durationMs);
     if (process.env.LOG_FORMAT === 'json' || isProd) {
       console.log(JSON.stringify({
         timestamp: new Date().toISOString(),
+        level: res.statusCode >= 500 ? 'error' : res.statusCode >= 400 ? 'warn' : 'info',
         requestId: req.id,
         method: req.method,
         path: req.path,
@@ -111,6 +141,15 @@ const corsOptions = {
 app.use(cors(corsOptions));
 app.options('*', cors(corsOptions));
 
+// Never allow browsers or intermediaries to cache authenticated/financial responses.
+app.use((req, res, next) => {
+  if (/^\/api\/(?:auth|account|admin|dashboard|payment|sellers\/me|internal)\b/.test(req.path)) {
+    res.setHeader('Cache-Control', 'no-store');
+    res.setHeader('Pragma', 'no-cache');
+  }
+  next();
+});
+
 const windowMs = Number(process.env.RATE_LIMIT_WINDOW_MS) || 15 * 60 * 1000;
 const maxRequests = Number(process.env.RATE_LIMIT_MAX_REQUESTS) || 100;
 
@@ -124,8 +163,8 @@ const globalLimiter = rateLimit({
 });
 
 const authLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 20,
+  windowMs: config.AUTH_RATE_LIMIT_WINDOW_MS,
+  max: config.AUTH_RATE_LIMIT_MAX_REQUESTS,
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: 'Trop de tentatives d’authentification' },
@@ -171,8 +210,8 @@ app.use('/api/newsletter', contactRoutes);
 app.get('/', (req, res) => {
   res.json({
     message: 'MandeMarket API opérationnelle',
-    version: '2.0.0',
-    environment: process.env.NODE_ENV || 'development',
+    version: APP_VERSION,
+    ...(isProd ? {} : { environment: process.env.NODE_ENV || 'development' }),
     timestamp: new Date().toISOString(),
   });
 });
@@ -184,46 +223,65 @@ app.get('/health/live', (req, res) => {
     status: 'LIVE',
     uptime: process.uptime(),
     timestamp: new Date().toISOString(),
+    version: APP_VERSION,
   });
 });
 
-// Readiness probe (PostgreSQL + Redis)
-app.get('/health/ready', async (req, res) => {
-  let dbStatus = 'UNKNOWN';
-  let redisStatus = 'NOT_CONFIGURED';
-
+async function getDependencyStatus() {
+  let database = 'DISCONNECTED';
+  let redis = process.env.REDIS_URL ? 'DISCONNECTED' : 'NOT_CONFIGURED';
   try {
     await db.$queryRaw`SELECT 1`;
-    dbStatus = 'CONNECTED';
-  } catch (err) {
-    dbStatus = 'DISCONNECTED';
+    database = 'CONNECTED';
+  } catch {
+    database = 'DISCONNECTED';
   }
-
   if (process.env.REDIS_URL) {
-    const redisOk = await RedisService.ping();
-    redisStatus = redisOk ? 'CONNECTED' : 'DISCONNECTED';
+    redis = await RedisService.ping() ? 'CONNECTED' : 'DISCONNECTED';
   }
+  return { database, redis, healthy: database === 'CONNECTED' && redis !== 'DISCONNECTED' };
+}
 
-  const isHealthy = dbStatus === 'CONNECTED' && redisStatus !== 'DISCONNECTED';
-  res.status(isHealthy ? 200 : 503).json({
-    status: isHealthy ? 'READY' : 'NOT_READY',
-    database: dbStatus,
-    redis: redisStatus,
-    uptime: process.uptime(),
+// Public readiness returns only what a load balancer needs.
+app.get('/health/ready', async (req, res) => {
+  const status = await getDependencyStatus();
+  res.status(status.healthy ? 200 : 503).json({
+    status: status.healthy ? 'READY' : 'NOT_READY',
+    version: APP_VERSION,
     timestamp: new Date().toISOString(),
-    version: '2.0.0',
+    ...(!isProd ? { database: status.database, redis: status.redis } : {}),
   });
 });
 
-// Statut des intégrations externes (sans exposer de secret)
-app.get('/health/external', (req, res) => {
+// Detailed integration status is operational data and requires the monitoring token.
+app.get('/health/external', requireOpsToken, (req, res) => {
   res.json({
     stripe: Boolean(process.env.STRIPE_SECRET_KEY),
     cinetpay: Boolean(process.env.CINETPAY_API_KEY && process.env.CINETPAY_SITE_ID),
     paystack: Boolean(process.env.PAYSTACK_SECRET_KEY),
     cloudinary: Boolean(process.env.CLOUDINARY_CLOUD_NAME),
-    email: Boolean(process.env.SMTP_HOST || process.env.SENDGRID_API_KEY || process.env.RESEND_API_KEY),
+    email: Boolean(process.env.SMTP_HOST),
   });
+});
+
+app.get('/api/internal/health', requireOpsToken, async (req, res) => {
+  const status = await getDependencyStatus();
+  res.status(status.healthy ? 200 : 503).json({
+    ...status,
+    version: APP_VERSION,
+    uptime: process.uptime(),
+    integrations: {
+      stripe: Boolean(process.env.STRIPE_SECRET_KEY),
+      cinetpay: Boolean(process.env.CINETPAY_API_KEY && process.env.CINETPAY_SITE_ID),
+      paystack: Boolean(process.env.PAYSTACK_SECRET_KEY),
+      cloudinary: Boolean(process.env.CLOUDINARY_CLOUD_NAME),
+      email: Boolean(process.env.SMTP_HOST),
+    },
+  });
+});
+
+app.get('/api/internal/metrics', requireOpsToken, (req, res) => {
+  res.type('text/plain; version=0.0.4; charset=utf-8').send(Metrics.render());
 });
 
 // Health standard pour rétro-compatibilité Docker
@@ -232,7 +290,7 @@ app.get('/health', (req, res) => {
     status: 'OK',
     uptime: process.uptime(),
     timestamp: new Date().toISOString(),
-    version: '2.0.0',
+    version: APP_VERSION,
   });
 });
 
@@ -244,6 +302,7 @@ app.use((err, req, res, next) => {
   res.status(err.statusCode || 500).json({
     error: 'Une erreur interne s\'est produite',
     message: isProd ? 'Erreur serveur' : err.message,
+    requestId: req.id,
   });
 });
 

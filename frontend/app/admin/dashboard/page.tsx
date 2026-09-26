@@ -101,8 +101,8 @@ export default function AdminDashboard() {
 
   // Vérifier l'authentification au chargement (admin/manager uniquement, pas vendeurs)
   useEffect(() => {
-    const savedToken = localStorage.getItem('admin_token');
-    const savedUser = localStorage.getItem('admin_user');
+    const savedToken = sessionStorage.getItem('admin_token');
+    const savedUser = sessionStorage.getItem('admin_user');
     
     if (!savedToken || !savedUser) {
       router.push('/admin/login');
@@ -218,8 +218,8 @@ export default function AdminDashboard() {
 
   const handleLogout = async () => {
     try { await logoutSession('staff'); } catch (error) { window.alert(error instanceof Error ? error.message : 'Deconnexion non confirmee'); return; }
-    localStorage.removeItem('admin_token');
-    localStorage.removeItem('admin_user');
+    sessionStorage.removeItem('admin_token');
+    sessionStorage.removeItem('admin_user');
     setToken(null);
     setUser(null);
     router.push('/admin/login');
@@ -260,7 +260,7 @@ export default function AdminDashboard() {
           <div>
             <div className="p-6 border-b border-white/10">
               <h1 className="text-2xl font-extrabold">
-                <span className="text-white">Mandin</span>
+                <span className="text-white">Mande</span>
                 <span className="text-brand-orange">Market</span>
               </h1>
               <p className="text-brand-orange font-medium text-sm mt-1">Super Admin</p>
@@ -471,7 +471,7 @@ export default function AdminDashboard() {
           {activeSection === 'utilisateurs' && (
             <div>
               <h1 className="text-3xl font-bold text-gray-900 mb-8">Gestion des Utilisateurs</h1>
-              <UsersManager token={token!} />
+              <UsersManager token={token!} currentRole={user.role} />
             </div>
           )}
           {activeSection === 'avis' && (

@@ -161,8 +161,9 @@ router.delete('/address', requireCustomerAuth, async (req, res) => {
 // GET /orders
 router.get('/orders', requireCustomerAuth, async (req, res) => {
   try {
-    const { page = 1, limit = 10 } = req.query;
-    const skip = (parseInt(page) - 1) * parseInt(limit);
+    const pageNum = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const limitNum = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 10));
+    const skip = (pageNum - 1) * limitNum;
     const [orders, total] = await Promise.all([
       db.order.findMany({
         where: { customerId: req.customerId },
@@ -170,11 +171,11 @@ router.get('/orders', requireCustomerAuth, async (req, res) => {
           items: { include: { product: { select: { id: true, name: true, image: true, price: true } } } },
           payment: true, shipping: true
         },
-        orderBy: { createdAt: 'desc' }, skip, take: parseInt(limit)
+        orderBy: { createdAt: 'desc' }, skip, take: limitNum
       }),
       db.order.count({ where: { customerId: req.customerId } })
     ]);
-    res.json({ orders, pagination: { page: parseInt(page), limit: parseInt(limit), total, pages: Math.ceil(total / parseInt(limit)) } });
+    res.json({ orders, pagination: { page: pageNum, limit: limitNum, total, pages: Math.ceil(total / limitNum) } });
   } catch { res.status(500).json({ error: 'Erreur serveur' }); }
 });
 
@@ -355,8 +356,15 @@ router.post('/wishlist/products', async (req, res) => {
   try {
     const { productIds } = req.body;
     if (!Array.isArray(productIds) || productIds.length === 0) return res.json([]);
+    if (productIds.length > 100) return res.status(400).json({ error: 'Trop de produits demandés' });
+    const ids = [...new Set(productIds.map(Number).filter(Number.isSafeInteger))];
     const products = await db.product.findMany({
-      where: { id: { in: productIds.map(Number) }, status: 'active' },
+      where: {
+        id: { in: ids },
+        status: 'active',
+        category: { is: { status: 'active' } },
+        OR: [{ sellerId: null }, { seller: { is: { status: 'approved' } } }],
+      },
       include: { category: { select: { id: true, name: true, slug: true } } }
     });
     res.json(products);

@@ -32,9 +32,9 @@ export default function AdminLogin() {
       const data = await response.json();
 
       if (response.ok) {
-        // Sauvegarder le token et les infos utilisateur
-        localStorage.setItem('admin_token', data.token);
-        localStorage.setItem('admin_user', JSON.stringify(data.user));
+        // Limiter le jeton d'accès à l'onglet. Le refresh token reste HttpOnly.
+        sessionStorage.setItem('admin_token', data.token);
+        sessionStorage.setItem('admin_user', JSON.stringify(data.user));
         
         // Vendeur approuvé → dashboard vendeur, sinon admin
         if (data.user?.role === 'seller') {

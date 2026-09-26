@@ -294,6 +294,19 @@ async function sendContactMessageNotification(data) {
   return sendEmail({ to: adminEmail, subject: `[Contact Support] ${escapeHtml(data.subject)} - ${escapeHtml(data.name)}`, html });
 }
 
+async function sendSellerCustomerMessage({ to, customerName, storeName, subject, message }) {
+  const safeStore = escapeHtml(storeName);
+  const html = baseTemplate(`
+    <h2 style="color: #111827; margin-top: 0;">Message de ${safeStore}</h2>
+    <p>Bonjour ${escapeHtml(customerName || '')},</p>
+    <div style="background: #f9fafb; border-left: 4px solid #f97316; padding: 16px; margin: 20px 0;">
+      ${escapeHtml(message).replace(/\n/g, '<br>')}
+    </div>
+    <p style="font-size: 12px; color: #6b7280;">Ce message concerne votre relation commerciale avec la boutique ${safeStore} sur MandeMarket.</p>
+  `);
+  return sendEmail({ to, subject: `[${safeStore}] ${escapeHtml(subject)}`, html });
+}
+
 // Administrative notification never includes a guest access capability.
 async function sendNewOrderNotification(order) {
   const to = process.env.ADMIN_EMAIL;
@@ -312,6 +325,7 @@ async function sendNewOrderNotification(order) {
 
 module.exports = {
   sendNewOrderNotification,
+  sendSellerCustomerMessage,
   sendEmail,
   sendOrderConfirmation,
   sendOrderStatusUpdate,

@@ -130,44 +130,59 @@ class PricingService {
     }
 
     // 3. Calcul de la promotion
+    // Platform promotions are platform-funded. Seller promotions only discount
+    // the owning seller's lines and therefore reduce that seller's commission base.
     let discountAmount = 0;
     let appliedPromotion = null;
 
     if (promoCode && typeof promoCode === 'string' && promoCode.trim().length > 0) {
       const code = promoCode.trim().toUpperCase();
-      const promotion = await tx.promotion.findUnique({
-        where: { code },
-      });
-
+      const promotion = await tx.promotion.findUnique({ where: { code } });
       const now = new Date();
-      if (
-        promotion &&
-        promotion.isActive &&
-        now >= promotion.startDate &&
-        now <= promotion.endDate &&
-        (promotion.maxUses === null || promotion.usedCount < promotion.maxUses) &&
-        (promotion.minAmount === null || subtotalAmount >= promotion.minAmount)
-      ) {
-        if (promotion.type === 'PERCENTAGE') {
-          discountAmount = Math.round((subtotalAmount * promotion.value) / 100);
-        } else if (promotion.type === 'FIXED_AMOUNT') {
-          discountAmount = Math.min(promotion.value, subtotalAmount);
-        } else if (promotion.type === 'FREE_SHIPPING') {
-          shippingCost = 0;
-          discountAmount = 0;
-        }
 
-        appliedPromotion = {
-          id: promotion.id,
-          code: promotion.code,
-          name: promotion.name,
-          type: promotion.type,
-          discountAmount,
-        };
+      if (promotion) {
+        const eligibleItems = promotion.sellerId
+          ? validatedItems.filter((item) => item.sellerId === promotion.sellerId)
+          : validatedItems;
+        const eligibleSubtotal = eligibleItems.reduce((sum, item) => sum + item.totalPrice, 0);
+        const valid = promotion.isActive &&
+          now >= promotion.startDate && now <= promotion.endDate &&
+          eligibleSubtotal > 0 &&
+          (promotion.maxUses == null || promotion.usedCount < promotion.maxUses) &&
+          (promotion.minAmount == null || eligibleSubtotal >= promotion.minAmount);
+
+        if (valid) {
+          if (promotion.type === 'PERCENTAGE') {
+            discountAmount = Math.round((eligibleSubtotal * promotion.value) / 100);
+          } else if (promotion.type === 'FIXED_AMOUNT') {
+            discountAmount = Math.min(promotion.value, eligibleSubtotal);
+          } else if (promotion.type === 'FREE_SHIPPING' && !promotion.sellerId) {
+            shippingCost = 0;
+          }
+          discountAmount = Math.max(0, Math.min(discountAmount, eligibleSubtotal));
+
+          if (promotion.sellerId && discountAmount > 0) {
+            let allocated = 0;
+            eligibleItems.forEach((item, index) => {
+              const lineDiscount = index === eligibleItems.length - 1
+                ? discountAmount - allocated
+                : Math.floor((discountAmount * item.totalPrice) / eligibleSubtotal);
+              allocated += lineDiscount;
+              const discountedLine = Math.max(0, item.totalPrice - lineDiscount);
+              item.commissionAmount = Math.round((discountedLine * item.commissionRate) / 100);
+              item.sellerEarnings = discountedLine - item.commissionAmount;
+            });
+          }
+
+          appliedPromotion = {
+            id: promotion.id, code: promotion.code, name: promotion.name, type: promotion.type,
+            sellerId: promotion.sellerId || null, discountAmount,
+          };
+        }
       }
     }
 
-    // 4. Calcul de taxe (actuellement 0% par défaut)
+    // 4. Calcul de taxe    // 4. Calcul de taxe (actuellement 0% par défaut)
     const taxAmount = 0;
 
     // 5. Total final inviolable

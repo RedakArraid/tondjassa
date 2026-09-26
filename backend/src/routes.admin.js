@@ -92,9 +92,13 @@ router.post('/users', async (req, res) => {
       return res.status(400).json({ error: 'Email, mot de passe et rôle requis' });
     }
 
-    // Seul un admin peut créer un autre admin ou manager
-    if (['admin', 'manager'].includes(role) && req.user.role !== 'admin') {
+    if (req.user.role !== 'admin') {
       return res.status(403).json({ error: 'Seul un administrateur peut créer des comptes de gestion' });
+    }
+    if (!['manager', 'admin'].includes(role)) {
+      return res.status(400).json({
+        error: 'Les clients et vendeurs doivent être créés par leurs parcours d’inscription afin de générer les profils métier associés.',
+      });
     }
 
     const cleanEmail = email.trim().toLowerCase();
@@ -136,7 +140,8 @@ router.post('/users', async (req, res) => {
     res.status(201).json({ ...user, verificationRequired: true });
   } catch (error) {
     console.error('Erreur POST /api/admin/users:', error);
-    res.status(500).json({ error: 'Erreur lors de la création de l’utilisateur' });
+    if (error?.name === 'ZodError') return res.status(400).json({ error: 'Données utilisateur invalides' });
+    res.status(error.statusCode || 500).json({ error: error.statusCode ? error.message : 'Erreur lors de la création de l’utilisateur' });
   }
 });
 
@@ -147,39 +152,56 @@ router.put('/users/:id/role', async (req, res) => {
     if (!['user', 'customer', 'seller', 'manager', 'admin'].includes(role)) {
       return res.status(400).json({ error: 'Rôle invalide' });
     }
-
-    // Seul un admin peut modifier le rôle vers ou depuis admin
     if (req.user.role !== 'admin') {
       return res.status(403).json({ error: 'Action réservée aux administrateurs' });
     }
 
-    const targetUser = await db.user.findUnique({ where: { id: req.params.id } });
-    if (!targetUser) {
-      return res.status(404).json({ error: 'Utilisateur introuvable' });
+    const targetUser = await db.user.findUnique({
+      where: { id: req.params.id },
+      include: {
+        seller: { select: { id: true } },
+        customer: { select: { id: true } },
+      },
+    });
+    if (!targetUser) return res.status(404).json({ error: 'Utilisateur introuvable' });
+    if (targetUser.role === role) {
+      return res.json({ success: true, user: { id: targetUser.id, email: targetUser.email, name: targetUser.name, role } });
+    }
+    if (role === 'seller' && !targetUser.seller) {
+      return res.status(409).json({ error: 'Ce compte ne possède pas de profil vendeur. Utilisez le parcours vendeur.' });
+    }
+    if (role === 'customer' && !targetUser.customer) {
+      return res.status(409).json({ error: 'Ce compte ne possède pas de profil client vérifié.' });
+    }
+    if (['admin', 'manager'].includes(role) && !targetUser.emailVerifiedAt) {
+      return res.status(409).json({ error: 'Vérifiez l’adresse email avant d’accorder des privilèges de gestion.' });
     }
 
-    // Empêcher de rétrograder le dernier admin
     if (targetUser.role === 'admin' && role !== 'admin') {
       const adminCount = await db.user.count({ where: { role: 'admin' } });
-      if (adminCount <= 1) {
-        return res.status(400).json({ error: 'Impossible de rétrograder le seul administrateur actif' });
-      }
+      if (adminCount <= 1) return res.status(400).json({ error: 'Impossible de rétrograder le seul administrateur actif' });
     }
 
-    const updated = await db.user.update({
-      where: { id: req.params.id },
-      data: { role },
-      select: { id: true, email: true, name: true, role: true },
-    });
-
-    await db.auditLog.create({
-      data: {
-        userId: req.user.userId,
-        action: 'ADMIN_USER_ROLE_UPDATED',
-        entity: 'User',
-        entityId: updated.id,
-        details: { previousRole: targetUser.role, newRole: role },
-      },
+    const updated = await db.$transaction(async (tx) => {
+      const user = await tx.user.update({
+        where: { id: req.params.id },
+        data: { role },
+        select: { id: true, email: true, name: true, role: true },
+      });
+      await tx.session.updateMany({
+        where: { userId: req.params.id, revokedAt: null },
+        data: { revokedAt: new Date() },
+      });
+      await tx.auditLog.create({
+        data: {
+          userId: req.user.userId,
+          action: 'ADMIN_USER_ROLE_UPDATED',
+          entity: 'User',
+          entityId: user.id,
+          details: { previousRole: targetUser.role, newRole: role, sessionsRevoked: true },
+        },
+      });
+      return user;
     });
 
     res.json({ success: true, user: updated });
@@ -190,7 +212,7 @@ router.put('/users/:id/role', async (req, res) => {
 });
 
 // POST /api/admin/users/:id/revoke-sessions - Révoquer toutes les sessions actives
-router.post('/users/:id/revoke-sessions', async (req, res) => {
+router.post('/users/:id/revoke-sessions', requireRole('admin'), async (req, res) => {
   try {
     await db.session.updateMany({
       where: { userId: req.params.id, revokedAt: null },
@@ -444,25 +466,25 @@ router.get('/returns', async (req, res) => {
 // POST /api/admin/returns/:id/approve - Approuver un retour
 router.post('/returns/:id/approve', async (req, res) => {
   try {
-    const ret = await db.returnRequest.findUnique({ where: { id: req.params.id } });
-    if (!ret) return res.status(404).json({ error: 'Demande de retour introuvable' });
-
-    const updated = await db.returnRequest.update({
+    const ret = await db.returnRequest.findUnique({
       where: { id: req.params.id },
-      data: { status: 'approved' },
+      include: { customer: true },
     });
+    if (!ret) return res.status(404).json({ error: 'Demande de retour introuvable' });
+    if (ret.status === 'approved') return res.json({ success: true, returnRequest: ret, notificationDelivered: null });
+    if (ret.status !== 'pending') {
+      return res.status(409).json({ error: `Transition retour impossible de ${ret.status} vers approved` });
+    }
 
+    const updated = await db.returnRequest.update({ where: { id: ret.id }, data: { status: 'approved' } });
     await db.auditLog.create({
-      data: {
-        userId: req.user.userId,
-        action: 'ADMIN_RETURN_APPROVED',
-        entity: 'ReturnRequest',
-        entityId: ret.id,
-      },
+      data: { userId: req.user.userId, action: 'ADMIN_RETURN_APPROVED', entity: 'ReturnRequest', entityId: ret.id },
     });
-
-    res.json({ success: true, returnRequest: updated });
+    const notification = await require('./services/email.service').sendReturnStatusEmail(ret.customer, updated, 'approved');
+    if (!notification.success) console.warn('[Return] Approbation enregistrée, email non livré:', notification.error);
+    res.json({ success: true, returnRequest: updated, notificationDelivered: notification.success });
   } catch (error) {
+    console.error('Erreur approbation retour:', error);
     res.status(500).json({ error: 'Erreur lors de l’approbation du retour' });
   }
 });
@@ -470,27 +492,37 @@ router.post('/returns/:id/approve', async (req, res) => {
 // POST /api/admin/returns/:id/reject - Rejeter un retour
 router.post('/returns/:id/reject', async (req, res) => {
   try {
-    const { reason } = req.body;
-    const updated = await db.returnRequest.update({
-      where: { id: req.params.id },
-      data: {
-        status: 'rejected',
-        description: reason ? `[Motif de refus]: ${reason}` : undefined,
-      },
-    });
+    const reason = typeof req.body?.reason === 'string' ? req.body.reason.trim().slice(0, 500) : '';
+    if (!reason) return res.status(400).json({ error: 'Motif de refus requis' });
 
+    const ret = await db.returnRequest.findUnique({
+      where: { id: req.params.id },
+      include: { customer: true },
+    });
+    if (!ret) return res.status(404).json({ error: 'Demande de retour introuvable' });
+    if (ret.status === 'rejected') return res.json({ success: true, returnRequest: ret, notificationDelivered: null });
+    if (ret.status !== 'pending') {
+      return res.status(409).json({ error: `Transition retour impossible de ${ret.status} vers rejected` });
+    }
+
+    const updated = await db.returnRequest.update({
+      where: { id: ret.id },
+      data: { status: 'rejected', description: `[Motif de refus]: ${reason}` },
+    });
     await db.auditLog.create({
       data: {
         userId: req.user.userId,
         action: 'ADMIN_RETURN_REJECTED',
         entity: 'ReturnRequest',
-        entityId: req.params.id,
+        entityId: ret.id,
         details: { reason },
       },
     });
-
-    res.json({ success: true, returnRequest: updated });
+    const notification = await require('./services/email.service').sendReturnStatusEmail(ret.customer, updated, 'rejected');
+    if (!notification.success) console.warn('[Return] Rejet enregistré, email non livré:', notification.error);
+    res.json({ success: true, returnRequest: updated, notificationDelivered: notification.success });
   } catch (error) {
+    console.error('Erreur rejet retour:', error);
     res.status(500).json({ error: 'Erreur lors du rejet du retour' });
   }
 });

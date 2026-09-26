@@ -52,3 +52,105 @@ Conserver les limitations du runbook : remboursements CinetPay/hors ligne avec
 attestation d'une operation externe reelle, suivi transporteur manuel, rapprochement
 des donnees historiques, sauvegarde chiffree hors serveur et alertes a valider.
 La PR reste en brouillon tant que ces conditions ne sont pas satisfaites.
+
+
+## Renforcement complémentaire
+
+La recette vérifie aussi les en-têtes de sécurité du frontend (CSP, anti-framing,
+HSTS sur HTTPS et nosniff), le refus d'accès anonyme aux métriques internes, puis
+l'accès avec un jeton de monitoring éphémère. Les métriques sont volontairement
+à faible cardinalité : méthode, classe de statut, durée, requêtes en vol et métriques
+processus ; aucun email, identifiant de commande ou chemin dynamique n'est utilisé
+comme label.
+
+Le parcours vendeur couvre désormais la duplication d'un produit et la mise à jour
+du stock, puis vérifie la projection serveur. Le parcours administrateur vérifie la
+visibilité de la boutique et l'accès au journal d'audit. Une panne API ne déclenche
+plus l'affichage de faux produits ou de catégories de démonstration côté frontend.
+
+
+## Cohérence des fonctions vendeur
+
+Les codes promo vendeur sont maintenant liés à leur boutique, ne réduisent que ses
+articles et recalculent commission/revenu sur le montant remisé. Les promotions
+globales restent administratives. L'interface vendeur n'expose que pourcentage et
+montant fixe, les deux modes réellement supportés avec cette comptabilité.
+
+La messagerie vendeur transmet réellement l'email via le SMTP configuré et refuse
+une adresse qui n'appartient pas à un acheteur de la boutique. Les invitations de
+collaborateurs sont explicitement indisponibles tant qu'un vrai modèle de membres
+et permissions n'existe pas : aucun faux email d'invitation n'est annoncé.
+
+
+## Avis vérifiés
+
+Un avis public non authentifié peut être soumis à modération, mais l'email déclaré
+ne suffit jamais à obtenir le badge « Achat vérifié ». Pour ce badge, l'API utilise
+le `customerId` de la session client, remplace le nom/email du formulaire par
+l'identité du compte, puis vérifie une commande de ce même client en état SHIPPED
+ou DELIVERED. Une contrainte unique empêche un même compte client de publier deux
+avis sur le même produit. La réponse vendeur est stockée séparément du commentaire
+original afin de préserver l'intégrité du contenu client.
+
+
+## Cohérence support, vendeurs et newsletter
+
+La recette couvre maintenant l'inscription vendeur complète : email réellement reçu,
+choix du mot de passe après preuve de possession, refus des API vendeur tant que la
+boutique est en attente, approbation administrateur, email d'approbation et accès au
+dashboard après validation.
+
+Le formulaire de contact n'annonce plus un succès si SMTP échoue. Son audit ne
+conserve plus le corps du message, le téléphone ou l'adresse email en clair.
+La newsletter est persistée dans PostgreSQL avec état actif/désinscrit et la route
+utilisée par le frontend est testée. Les tickets support vendeur sont enregistrés
+durablement dans le journal d'audit et réellement annoncés au support par SMTP ;
+un échec de livraison est exposé comme tel au vendeur.
+
+Les notifications de traitement des versements vendeur utilisent désormais la
+fonction email réellement exportée, au lieu d'un appel vers un nom inexistant.
+
+
+## Visibilité catalogue, RBAC et retours
+
+Les brouillons et archives produits ne sont plus énumérables via le catalogue
+public, même avec un paramètre `status`. Un produit privé renvoie 404 par ID au
+public ; seul son vendeur approuvé ou un compte de gestion peut le consulter.
+Les produits d'une catégorie inactive ou d'une boutique suspendue sont également
+exclus du catalogue et des listes de souhaits publiques.
+
+La taxonomie publique masque les catégories inactives. Les mutations admin refusent
+les cycles indirects et une catégorie active ne peut pas dépendre d'une catégorie
+inactive. L'admin ne peut plus fabriquer artificiellement un compte client/vendeur
+sans le profil métier associé : ces rôles passent par leurs parcours d'inscription.
+
+Un changement de rôle révoque immédiatement toutes les sessions existantes. Les
+managers peuvent consulter les comptes mais la création de comptes de gestion, le
+changement de rôle et la révocation de sessions restent réservés à l'administrateur.
+
+La recette couvre un retour intégral fictif de bout en bout : commande livrée et
+payée, demande client, approbation, refus d'une transition contradictoire, création
+du remboursement manuel à attester, confirmation exacte montant/devise/référence,
+répétition idempotente, remise en stock, statut REFUNDED et inversion des projections
+financières vendeur/client. Aucun PSP réel n'est appelé.
+
+Le même workflow exécute aussi `e2e/http_concurrency_smoke.py` : 90 lectures
+concurrentes modestes sur frontend, catalogue et readiness. Ce smoke détecte les
+5xx et erreurs de connexion évidents ; ce n'est ni un benchmark de capacité ni
+un engagement de latence.
+
+
+## Portée de stockage des secrets navigateur
+
+Les JWT d'accès client, vendeur et administration ainsi que les capacités d'accès
+aux commandes invitées sont conservés uniquement dans `sessionStorage`. Ils ne
+doivent jamais être écrits dans `localStorage`, afin qu'une fermeture d'onglet
+supprime ces secrets côté navigateur. La session longue durée reste portée par un
+cookie de renouvellement `HttpOnly`, `Secure` en production et contrôlé côté
+serveur. Cette mesure réduit la persistance d'un secret exposable à du JavaScript ;
+elle ne remplace pas la CSP ni la prévention des XSS.
+
+La suite frontend contient un contrôle statique qui échoue si ces clés sensibles
+réapparaissent dans un appel `localStorage`. La recette navigateur vérifie aussi
+qu'après connexion le jeton est présent dans la session de l'onglet et absent du
+stockage persistant.

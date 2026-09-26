@@ -72,6 +72,7 @@ function DashboardContent() {
 
   // Orders & returns
   const [orders, setOrders] = useState<Order[]>([]);
+  const [orderTotal, setOrderTotal] = useState(0);
   const [returns, setReturns] = useState<ReturnReq[]>([]);
   const [dataLoading, setDataLoading] = useState(true);
 
@@ -142,6 +143,7 @@ function DashboardContent() {
 
       if (ordersRes.status === 'fulfilled' && ordersRes.value.orders) {
         setOrders(ordersRes.value.orders);
+        setOrderTotal(ordersRes.value.pagination?.total ?? ordersRes.value.orders.length);
       }
       if (returnsRes.status === 'fulfilled' && returnsRes.value.returns) {
         setReturns(returnsRes.value.returns);
@@ -227,8 +229,8 @@ function DashboardContent() {
       setPasswordError('Les mots de passe ne correspondent pas');
       return;
     }
-    if (passwordForm.newPassword.length < 6) {
-      setPasswordError('Le nouveau mot de passe doit comporter au moins 6 caractères');
+    if (passwordForm.newPassword.length < 12) {
+      setPasswordError('Le nouveau mot de passe doit comporter au moins 12 caractères');
       return;
     }
     setPasswordSaving(true);
@@ -241,7 +243,8 @@ function DashboardContent() {
       });
       setPasswordSuccess(true);
       setPasswordForm({ currentPassword: '', newPassword: '', confirmPassword: '' });
-      setTimeout(() => setPasswordSuccess(false), 3000);
+      sessionStorage.removeItem('mandemarket_customer_token');
+      window.location.replace('/compte/login?passwordChanged=1');
     } catch (err) {
       setPasswordError(err instanceof Error ? err.message : 'Erreur changement de mot de passe');
     } finally {
@@ -351,7 +354,7 @@ function DashboardContent() {
                 </div>
                 <div>
                   <p className="text-sm text-gray-500 font-medium">Commandes passées</p>
-                  <p className="text-2xl font-bold text-gray-900">{orders.length}</p>
+                  <p className="text-2xl font-bold text-gray-900">{orderTotal}</p>
                 </div>
               </div>
 
@@ -491,6 +494,8 @@ function DashboardContent() {
                           ? 'Remboursé'
                           : ret.status === 'rejected'
                           ? 'Refusé'
+                          : ret.status === 'approved'
+                          ? 'Retour approuvé — remboursement en attente'
                           : 'En attente d’approbation'}
                       </span>
                     </div>
@@ -818,7 +823,7 @@ function DashboardContent() {
                 <h2 className="text-lg font-bold text-gray-900">Changer de mot de passe</h2>
               </div>
               <p className="text-sm text-gray-500 mb-6">
-                Pour sécuriser votre compte, utilisez au moins 6 caractères avec chiffres et lettres.
+                Pour sécuriser votre compte, utilisez au moins 12 caractères.
               </p>
 
               {passwordSuccess && (
@@ -856,7 +861,7 @@ function DashboardContent() {
                   <input
                     type="password"
                     required
-                    minLength={6}
+                    minLength={12}
                     value={passwordForm.newPassword}
                     onChange={(e) => setPasswordForm({ ...passwordForm, newPassword: e.target.value })}
                     className="w-full px-3.5 py-2.5 border border-gray-300 rounded-xl focus:ring-2 focus:ring-orange-500 outline-none text-sm"
@@ -870,7 +875,7 @@ function DashboardContent() {
                   <input
                     type="password"
                     required
-                    minLength={6}
+                    minLength={12}
                     value={passwordForm.confirmPassword}
                     onChange={(e) => setPasswordForm({ ...passwordForm, confirmPassword: e.target.value })}
                     className="w-full px-3.5 py-2.5 border border-gray-300 rounded-xl focus:ring-2 focus:ring-orange-500 outline-none text-sm"

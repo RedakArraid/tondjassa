@@ -1,4 +1,5 @@
 const http = require('http');
+process.env.METRICS_TOKEN = 'test-monitoring-token-0123456789abcdef';
 const app = require('../app');
 const db = require('../db');
 
@@ -41,8 +42,13 @@ describe('Observabilité & Healthchecks (MM-INF-091 / MM-INF-092 / MM-QA-090)', 
     expect(body.version).toBe('2.0.0');
   });
 
-  it('GET /health/external expose les indicateurs sans révéler de clés secrètes', async () => {
-    const res = await fetch(`${baseUrl}/health/external`);
+  it('protège les indicateurs externes avec le jeton opérationnel', async () => {
+    const denied = await fetch(`${baseUrl}/health/external`);
+    expect(denied.status).toBe(404);
+
+    const res = await fetch(`${baseUrl}/health/external`, {
+      headers: { Authorization: `Bearer ${process.env.METRICS_TOKEN}` },
+    });
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(typeof body.stripe).toBe('boolean');
@@ -53,6 +59,20 @@ describe('Observabilité & Healthchecks (MM-INF-091 / MM-INF-092 / MM-QA-090)', 
 
     const rawText = JSON.stringify(body);
     expect(rawText).not.toMatch(/sk_live|sk_test|apiKey|secret/i);
+  });
+
+  it('protège les métriques et les expose au format Prometheus avec authentification', async () => {
+    const denied = await fetch(`${baseUrl}/api/internal/metrics`);
+    expect(denied.status).toBe(404);
+
+    const res = await fetch(`${baseUrl}/api/internal/metrics`, {
+      headers: { Authorization: `Bearer ${process.env.METRICS_TOKEN}` },
+    });
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type')).toContain('text/plain');
+    const body = await res.text();
+    expect(body).toContain('mandemarket_http_requests_total');
+    expect(body).toContain('mandemarket_http_request_duration_seconds');
   });
 
   it('Génère ou propage un X-Request-ID unique pour chaque requête', async () => {

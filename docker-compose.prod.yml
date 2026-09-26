@@ -37,6 +37,7 @@ services:
       - LOG_FILE=/app/logs/app.log
       - RATE_LIMIT_WINDOW_MS=${RATE_LIMIT_WINDOW_MS:-900000}
       - RATE_LIMIT_MAX_REQUESTS=${RATE_LIMIT_MAX_REQUESTS:-100}
+      - METRICS_TOKEN=${METRICS_TOKEN:?Set a strong METRICS_TOKEN}
       - CLOUDINARY_CLOUD_NAME=${CLOUDINARY_CLOUD_NAME}
       - CLOUDINARY_API_KEY=${CLOUDINARY_API_KEY}
       - CLOUDINARY_API_SECRET=${CLOUDINARY_API_SECRET}
@@ -57,6 +58,15 @@ services:
         condition: service_healthy
     restart: unless-stopped
     init: true
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    pids_limit: 256
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m,mode=1777
+      - /app/tmp:rw,noexec,nosuid,size=32m,uid=1001,gid=1001,mode=0770
     logging:
       driver: json-file
       options:
@@ -122,6 +132,15 @@ services:
         condition: service_healthy
     restart: unless-stopped
     init: true
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    pids_limit: 256
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m,mode=1777
+      - /app/.next/cache:rw,noexec,nosuid,size=64m,uid=1001,gid=1001,mode=0770
     logging:
       driver: json-file
       options:

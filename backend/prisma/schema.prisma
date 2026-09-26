@@ -51,6 +51,7 @@ model Seller {
   orderItems     OrderItem[]
   payouts        SellerPayout[]
   ledgerEntries  SellerLedgerEntry[]
+  promotions     Promotion[]
   createdAt      DateTime            @default(now())
   updatedAt      DateTime            @updatedAt
 
@@ -140,6 +141,7 @@ model Customer {
   orders               Order[]
   returnRequests       ReturnRequest[]
   promotionRedemptions PromotionRedemption[]
+  reviews              Review[]
   totalSpent           Int                    @default(0) // centimes
   loyaltyPoints        Int                    @default(0)
   status               String                 @default("active")
@@ -324,6 +326,8 @@ model Shipping {
 // ===== PROMOTIONS =====
 model Promotion {
   id          String                @id @default(uuid())
+  sellerId    String?
+  seller      Seller?               @relation(fields: [sellerId], references: [id], onDelete: Cascade)
   code        String                @unique
   name        String
   description String
@@ -341,6 +345,7 @@ model Promotion {
 
   @@index([code])
   @@index([isActive])
+  @@index([sellerId, isActive])
 }
 
 // ===== UTILISATIONS DE PROMOTION (MM-BE-032) =====
@@ -441,11 +446,15 @@ model Review {
   id            String       @id @default(uuid())
   productId     Int
   product       Product      @relation(fields: [productId], references: [id], onDelete: Cascade)
+  customerId    String?
+  customer      Customer?    @relation(fields: [customerId], references: [id], onDelete: SetNull)
   customerName  String
   customerEmail String?
   rating        Int          // 1-5 étoiles
   title         String?
   comment       String
+  sellerReply   String?
+  sellerReplyAt DateTime?
   isVerified    Boolean      @default(false)
   helpful       Int          @default(0)
   status        ReviewStatus @default(approved)
@@ -454,6 +463,8 @@ model Review {
 
   @@index([productId])
   @@index([status])
+  @@index([customerId])
+  @@unique([customerId, productId])
 }
 
 // ===== NOTIFICATIONS =====
@@ -488,6 +499,20 @@ model AuditLog {
   @@index([userId])
   @@index([action])
   @@index([createdAt])
+}
+
+// ===== ABONNÉS NEWSLETTER =====
+model NewsletterSubscriber {
+  id             String    @id @default(uuid())
+  email          String    @unique
+  status         String    @default("active")
+  source         String    @default("website")
+  consentedAt    DateTime  @default(now())
+  unsubscribedAt DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@index([status])
 }
 
 // ===== ENUMS =====

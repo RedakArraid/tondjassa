@@ -130,3 +130,32 @@ out an old commit and running `up` does not change an already built image.
 
 After restore/rollback: migrate as appropriate, run preflight, compare provider and
 ledger records, verify accounts and health, and only then reopen traffic.
+
+
+## Isolation des conteneurs applicatifs
+
+Les services backend, worker et frontend doivent conserver les protections définies
+dans `docker-compose.prod.yml` : utilisateur non-root, root filesystem en lecture
+seule, `no-new-privileges`, suppression de toutes les capacités Linux et limite de
+processus. Les seuls emplacements temporaires écrits par l'application sont montés
+en `tmpfs`; les uploads et logs backend restent sur leurs volumes dédiés.
+
+Avant une mise en ligne, ne retirez pas ces protections pour contourner une erreur.
+Identifiez plutôt le chemin qui nécessite réellement une écriture et ajoutez un
+montage dédié minimal. La CI vérifie explicitement que les trois conteneurs
+applicatifs restent non-root, en lecture seule et sans capacités Linux.
+
+
+## Test de charge borne en CI
+
+Le job Docker exécute aussi `scripts/load-smoke.mjs` sur les images de production
+déjà démarrées. Ce contrôle génère 60 requêtes avec une concurrence de 12 sur la
+readiness, le catalogue, les catégories et le frontend. Le job échoue au premier
+écart global si une requête retourne un statut non-2xx ou si la latence p95 dépasse
+1500 ms sur le runner GitHub.
+
+Le fichier `load-smoke.json` est conservé comme artefact pendant 14 jours. Ce test
+sert à détecter une régression grossière (blocage event-loop, saturation immédiate,
+5xx/429 sous faible concurrence). Il ne constitue pas une mesure de capacité de
+production : les objectifs de dimensionnement doivent être refaits en préproduction
+avec la topologie, la base, Redis et les volumes réels, sans trafic client.

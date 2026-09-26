@@ -68,8 +68,8 @@ export default function DevenirVendeurPage() {
       // Store token so seller can access dashboard directly
       if (data.verificationRequired) { window.location.href = '/compte/verifier-email'; return; }
       if (data.token) {
-        localStorage.setItem('admin_token', data.token);
-        if (data.user) localStorage.setItem('admin_user', JSON.stringify(data.user));
+        sessionStorage.setItem('admin_token', data.token);
+        if (data.user) sessionStorage.setItem('admin_user', JSON.stringify(data.user));
       }
       setStep('success');
     } catch {
@@ -222,7 +222,7 @@ export default function DevenirVendeurPage() {
                 />
               </div>
               <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-1.5">Mot de passe * <span className="font-normal text-gray-400">(8 caractères min.)</span></label>
+                <label className="block text-sm font-semibold text-gray-700 mb-1.5">Mot de passe * <span className="font-normal text-gray-400">(12 caractères min.)</span></label>
                 <input
                   type="password" name="password" value={form.password} onChange={handleChange} required minLength={12}
                   placeholder="••••••••"

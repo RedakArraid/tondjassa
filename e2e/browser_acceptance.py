@@ -20,10 +20,26 @@ MAIL = "http://127.0.0.1:8025"
 OUT = Path("qa-results")
 OUT.mkdir(exist_ok=True)
 PASSWORD = os.environ.get("E2E_PASSWORD", "")
+OPS_TOKEN = os.environ.get("CI_METRICS_TOKEN", "")
 if len(PASSWORD) < 16:
     raise RuntimeError("E2E_PASSWORD must be generated for this isolated run")
+if len(OPS_TOKEN) < 32:
+    raise RuntimeError("CI_METRICS_TOKEN must be generated for this isolated run")
 TOKEN_KEY = "mandemarket_customer_token"
 EXTERNAL = re.compile(r"^https?://(?!localhost:3443(?:/|$))")
+
+
+def mail_received(address, subject_fragment):
+    until = time.monotonic() + 30
+    while time.monotonic() < until:
+        with urllib.request.urlopen(MAIL + "/api/v1/messages", timeout=5) as response:
+            messages = json.load(response).get("messages", [])
+        for message in messages:
+            recipients = message.get("To", [])
+            if any(recipient.get("Address") == address for recipient in recipients) and subject_fragment.lower() in message.get("Subject", "").lower():
+                return True
+        time.sleep(0.25)
+    return False
 
 
 def mail_link(address, path):
@@ -87,16 +103,22 @@ class BrowserAcceptance(unittest.TestCase):
             headers["Authorization"] = "Bearer " + token
         return self.context.request.fetch(BASE + path, method=method, headers=headers, data=data)
 
-    def login(self, email, password, staff=False):
+    def login(self, email, password, staff=False, expected_path=None):
         self.page.goto(BASE + ("/admin/login" if staff else "/compte/login"))
-        self.page.locator('form input[type="email"]').first.fill(email)
-        self.page.locator('form input[type="password"]').first.fill(password)
-        self.page.get_by_role("button", name="Se connecter", exact=True).click()
-        target = "/vendeur/dashboard" if email == "qa-seller@test.invalid" else "/admin/dashboard" if staff else "/compte/dashboard"
+        login_button = self.page.get_by_role("button", name="Se connecter", exact=True)
+        expect(login_button).to_be_visible()
+        # During client auth hydration the newsletter form is rendered before the
+        # login form. Select the form that owns the login button, never ".first".
+        form = self.page.locator("form").filter(has=login_button)
+        form.locator('input[type="email"]').fill(email)
+        form.locator('input[type="password"]').fill(password)
+        login_button.click()
+        target = expected_path or ("/vendeur/dashboard" if email == "qa-seller@test.invalid" else "/admin/dashboard" if staff else "/compte/dashboard")
         expect(self.page).to_have_url(re.compile(re.escape(BASE + target)))
         key = "admin_token" if staff else TOKEN_KEY
-        self.page.wait_for_function("key => !!localStorage.getItem(key)", arg=key)
-        return self.page.evaluate("key => localStorage.getItem(key)", key)
+        self.page.wait_for_function("key => !!sessionStorage.getItem(key)", arg=key)
+        self.assertIsNone(self.page.evaluate("key => localStorage.getItem(key)", key))
+        return self.page.evaluate("key => sessionStorage.getItem(key)", key)
 
     def add_to_cart(self):
         self.page.goto(BASE + "/boutique/1")
@@ -116,6 +138,7 @@ class BrowserAcceptance(unittest.TestCase):
             self.page.locator('input[name="' + name + '"]').fill(value)
         self.page.get_by_role("button", name="Créer mon compte", exact=True).click()
         expect(self.page).to_have_url(BASE + "/compte/verifier-email")
+        self.assertIsNone(self.page.evaluate("key => sessionStorage.getItem(key)", TOKEN_KEY))
         self.assertIsNone(self.page.evaluate("key => localStorage.getItem(key)", TOKEN_KEY))
         denied = self.api("/api/account/login", method="POST", data={"email": email, "password": PASSWORD})
         self.assertEqual(denied.status, 403)
@@ -131,13 +154,13 @@ class BrowserAcceptance(unittest.TestCase):
         self.assertTrue(cookies[0]["httpOnly"] and cookies[0]["secure"])
         self.assertEqual(cookies[0]["sameSite"], "Lax")
         # Exercise renewal with a real refresh cookie, without waiting 15 minutes.
-        self.page.evaluate("key => localStorage.setItem(key, 'invalid.expired.token')", TOKEN_KEY)
+        self.page.evaluate("key => sessionStorage.setItem(key, 'invalid.expired.token')", TOKEN_KEY)
         self.page.reload()
-        self.page.wait_for_function("key => { const t=localStorage.getItem(key); return t && t !== 'invalid.expired.token'; }", arg=TOKEN_KEY)
-        active = self.page.evaluate("key => localStorage.getItem(key)", TOKEN_KEY)
+        self.page.wait_for_function("key => { const t=sessionStorage.getItem(key); return t && t !== 'invalid.expired.token'; }", arg=TOKEN_KEY)
+        active = self.page.evaluate("key => sessionStorage.getItem(key)", TOKEN_KEY)
         self.assertEqual(self.api("/api/account/me", active).status, 200)
         self.page.get_by_role("button", name=re.compile("Se d.connecter", re.I)).first.click()
-        self.page.wait_for_function("key => !localStorage.getItem(key)", arg=TOKEN_KEY)
+        self.page.wait_for_function("key => !sessionStorage.getItem(key)", arg=TOKEN_KEY)
         self.assertEqual(self.api("/api/account/me", active).status, 401)
         self.page.goto(BASE + "/compte/mot-de-passe-oublie")
         self.page.get_by_label("Email", exact=True).fill(email)
@@ -197,7 +220,7 @@ class BrowserAcceptance(unittest.TestCase):
         token = self.login("qa-admin@test.invalid", PASSWORD, staff=True)
         self.assertEqual(self.api("/api/admin/refunds", token).status, 200)
         self.assertEqual(self.api("/api/auth/logout", token, method="POST").status, 200)
-        self.page.evaluate("localStorage.clear()")
+        self.page.evaluate("localStorage.clear(); sessionStorage.clear()")
         token = self.login("qa-seller@test.invalid", PASSWORD, staff=True)
         self.assertEqual(self.api("/api/admin/refunds", token).status, 403)
         expect(self.page.get_by_text("QA Boutique", exact=True).first).to_be_visible()
@@ -209,6 +232,416 @@ class BrowserAcceptance(unittest.TestCase):
         self.page.wait_for_load_state("networkidle")
         self.page.reload()
         expect(self.page.get_by_text("Article recette QA", exact=True).first).to_be_visible()
+
+    def test_07_security_headers_and_internal_metrics(self):
+        response = self.context.request.get(BASE + "/")
+        self.assertEqual(response.status, 200)
+        headers = response.headers
+        csp = headers.get("content-security-policy", "")
+        self.assertIn("frame-ancestors 'none'", csp)
+        self.assertIn("object-src 'none'", csp)
+        self.assertIn("max-age=", headers.get("strict-transport-security", ""))
+        self.assertEqual(headers.get("x-content-type-options"), "nosniff")
+
+        denied = self.api("/api/internal/metrics")
+        self.assertEqual(denied.status, 404)
+        metrics = self.api("/api/internal/metrics", headers={"Authorization": "Bearer " + OPS_TOKEN})
+        self.assertEqual(metrics.status, 200)
+        body = metrics.text()
+        self.assertIn("mandemarket_http_requests_total", body)
+        self.assertIn("mandemarket_http_request_duration_seconds", body)
+
+    def test_08_seller_catalog_management(self):
+        token = self.login("qa-seller@test.invalid", PASSWORD, staff=True)
+        self.page.goto(BASE + "/vendeur/dashboard/produits")
+        expect(self.page.get_by_role("heading", name="Tous les produits")).to_be_visible()
+        expect(self.page.get_by_text("Article recette QA", exact=True).first).to_be_visible()
+
+        self.page.get_by_role("button", name="Dupliquer").first.click()
+        expect(self.page.get_by_text(re.compile("Produit dupliqu.*succ", re.I))).to_be_visible()
+
+        products = self.api("/api/sellers/me/products?limit=50", token)
+        self.assertEqual(products.status, 200)
+        data = products.json()["products"]
+        original = next(product for product in data if product["name"] == "Article recette QA")
+        self.assertTrue(any(product["name"].startswith("[Copie]") for product in data))
+
+        stock = self.api(
+            f"/api/sellers/me/products/{original['id']}/stock",
+            token,
+            method="PUT",
+            data={"quantity": 7, "lowStockThreshold": 5},
+        )
+        self.assertEqual(stock.status, 200)
+        self.assertEqual(stock.json()["stock"], 7)
+
+        promo = self.api("/api/sellers/me/promotions", token, method="POST",
+                         data={"code": "QA10", "name": "QA 10%", "type": "PERCENTAGE", "value": 10, "minAmount": 0, "maxUses": 20})
+        self.assertEqual(promo.status, 201)
+        listed = self.api("/api/sellers/me/promotions", token)
+        self.assertEqual(listed.status, 200)
+        self.assertTrue(any(item["code"] == "QA10" for item in listed.json()))
+
+        message = self.api("/api/sellers/me/messages/send", token, method="POST",
+                           data={"customerEmail": "qa-guest@test.invalid", "subject": "Suivi QA vendeur",
+                                 "content": "Votre commande de recette est bien prise en charge."})
+        self.assertEqual(message.status, 200)
+        self.assertTrue(mail_received("qa-guest@test.invalid", "Suivi QA vendeur"))
+
+        team = self.api("/api/sellers/me/team", token)
+        self.assertEqual(team.status, 200)
+        invite = self.api("/api/sellers/me/team/invite", token, method="POST",
+                          data={"email": "collab@test.invalid", "role": "manager"})
+        self.assertEqual(invite.status, 501)
+
+    def test_09_admin_marketplace_and_audit(self):
+        token = self.login("qa-admin@test.invalid", PASSWORD, staff=True)
+        sellers = self.api("/api/sellers/admin/all", token)
+        self.assertEqual(sellers.status, 200)
+        payload = sellers.json()
+        seller_list = payload if isinstance(payload, list) else payload.get("sellers", [])
+        self.assertTrue(any(seller.get("storeName") == "QA Boutique" for seller in seller_list))
+
+        audit = self.api("/api/admin/audit-logs?page=1&limit=10", token)
+        self.assertEqual(audit.status, 200)
+        self.page.goto(BASE + "/admin/dashboard")
+        expect(self.page.get_by_text("MandeMarket", exact=True).first).to_be_visible()
+
+    def test_10_verified_review_requires_authenticated_customer(self):
+        catalog = self.api("/api/products?search=Article%20recette%20QA")
+        self.assertEqual(catalog.status, 200)
+        product_id = catalog.json()["products"][0]["id"]
+
+        spoof = self.api(
+            "/api/reviews",
+            method="POST",
+            data={
+                "productId": product_id,
+                "customerName": "Usurpateur",
+                "customerEmail": "qa-buyer@test.invalid",
+                "rating": 1,
+                "title": "Tentative",
+                "comment": "Cet avis ne doit jamais obtenir le badge achat vérifié.",
+            },
+        )
+        self.assertEqual(spoof.status, 201)
+        self.assertFalse(spoof.json()["review"]["isVerified"])
+        self.assertEqual(spoof.json()["review"]["status"], "pending")
+
+        buyer_token = self.login("qa-buyer@test.invalid", PASSWORD)
+        verified = self.api(
+            "/api/reviews",
+            buyer_token,
+            method="POST",
+            data={
+                "productId": product_id,
+                "customerName": "Nom falsifié",
+                "customerEmail": "attacker@test.invalid",
+                "rating": 5,
+                "title": "Achat réel",
+                "comment": "Avis authentifié issu du compte réellement livré.",
+            },
+        )
+        self.assertEqual(verified.status, 201)
+        review = verified.json()["review"]
+        self.assertTrue(review["isVerified"])
+        self.assertEqual(review["status"], "approved")
+        self.assertEqual(review["customerName"], "QA Buyer")
+        self.assertEqual(review["customerEmail"], "qa-buyer@test.invalid")
+
+        duplicate = self.api(
+            "/api/reviews",
+            buyer_token,
+            method="POST",
+            data={"productId": product_id, "customerName": "QA", "rating": 4, "comment": "Doublon"},
+        )
+        self.assertEqual(duplicate.status, 409)
+
+        self.page.evaluate("localStorage.clear(); sessionStorage.clear()")
+        seller_token = self.login("qa-seller@test.invalid", PASSWORD, staff=True)
+        reply = self.api(
+            f"/api/sellers/me/reviews/{review['id']}/reply",
+            seller_token,
+            method="POST",
+            data={"reply": "Merci pour votre retour vérifié."},
+        )
+        self.assertEqual(reply.status, 200)
+        self.assertEqual(reply.json()["review"]["sellerReply"], "Merci pour votre retour vérifié.")
+
+        public_reviews = self.api(f"/api/reviews/{product_id}")
+        self.assertEqual(public_reviews.status, 200)
+        visible = public_reviews.json()["reviews"]
+        self.assertEqual(len([item for item in visible if item["id"] == review["id"]]), 1)
+        published = next(item for item in visible if item["id"] == review["id"])
+        self.assertTrue(published["isVerified"])
+        self.assertEqual(published["sellerReply"], "Merci pour votre retour vérifié.")
+        self.assertFalse(any(item["id"] == spoof.json()["review"]["id"] for item in visible))
+
+
+    def test_11_seller_onboarding_email_approval_and_access(self):
+        email = "qa-new-seller@test.invalid"
+        self.page.goto(BASE + "/devenir-vendeur")
+        self.page.get_by_role("button", name=re.compile("Créer ma boutique gratuitement", re.I)).click()
+        self.page.locator('input[name="name"]').fill("Nouveau Vendeur QA")
+        self.page.locator('input[name="email"]').fill(email)
+        self.page.locator('input[name="password"]').fill(PASSWORD)
+        self.page.locator('input[name="storeName"]').fill("Nouvelle Boutique QA")
+        self.page.locator('textarea[name="description"]').fill("Boutique fictive pour la recette d'approbation.")
+        self.page.get_by_role("button", name="Créer ma boutique", exact=True).click()
+        expect(self.page).to_have_url(BASE + "/compte/verifier-email")
+
+        self.page.goto(mail_link(email, "/compte/verifier-email"))
+        seller_password = PASSWORD + "s"
+        self.page.get_by_label("Nouveau mot de passe").fill(seller_password)
+        self.page.get_by_role("button", name="Confirmer", exact=True).click()
+        expect(self.page.get_by_role("status")).to_contain_text("Adresse verifiee")
+
+        pending_login = self.api("/api/auth/login", method="POST", data={"email": email, "password": seller_password})
+        self.assertEqual(pending_login.status, 200)
+        pending_token = pending_login.json()["token"]
+        self.assertEqual(self.api("/api/sellers/me/profile", pending_token).status, 403)
+
+        self.page.evaluate("localStorage.clear(); sessionStorage.clear()")
+        admin_token = self.login("qa-admin@test.invalid", PASSWORD, staff=True)
+        sellers = self.api("/api/sellers/admin/all?status=pending", admin_token)
+        self.assertEqual(sellers.status, 200)
+        candidate = next(item for item in sellers.json() if item["storeName"] == "Nouvelle Boutique QA")
+        approved = self.api(
+            f"/api/sellers/admin/{candidate['id']}/approve",
+            admin_token,
+            method="PUT",
+            data={"status": "approved", "commissionRate": 12},
+        )
+        self.assertEqual(approved.status, 200)
+        self.assertEqual(approved.json()["commissionRate"], 12)
+        self.assertTrue(mail_received(email, "est en ligne"))
+
+        self.page.evaluate("localStorage.clear(); sessionStorage.clear()")
+        seller_token = self.login(email, seller_password, staff=True, expected_path="/vendeur/dashboard")
+        profile = self.api("/api/sellers/me/profile", seller_token)
+        self.assertEqual(profile.status, 200)
+        self.assertEqual(profile.json()["storeName"], "Nouvelle Boutique QA")
+
+    def test_12_contact_smtp_and_durable_newsletter(self):
+        self.page.goto(BASE + "/contact")
+        expect(self.page.get_by_role("heading", name="Nous sommes à votre écoute")).to_be_visible()
+        submit = self.page.get_by_role("button", name="Envoyer mon message").first
+        contact_form = self.page.locator("form").filter(has=submit).first
+        contact_form.get_by_placeholder("Ex: Fatoumata Traoré").fill("Contact QA")
+        contact_form.get_by_placeholder("Ex: fatoumata@exemple.com").fill("qa-contact@test.invalid")
+        contact_form.get_by_placeholder("Ex: Suivi de livraison, partenariat...").fill("Question QA contact")
+        contact_form.get_by_placeholder("Détaillez votre question ou demande...").fill(
+            "Message fictif de recette pour vérifier la livraison SMTP du support."
+        )
+        submit.click()
+        expect(self.page.get_by_role("heading", name="Message bien transmis !")).to_be_visible()
+        self.assertTrue(mail_received("qa-admin@test.invalid", "Question QA contact"))
+
+        newsletter = "qa-newsletter@test.invalid"
+        footer = self.page.locator("footer")
+        footer.get_by_placeholder("Votre adresse email").fill(newsletter)
+        footer.get_by_role("button", name="S’inscrire").click()
+        expect(footer.get_by_text("Merci pour votre inscription à la newsletter !")).to_be_visible()
+
+        unsub = self.api("/api/newsletter/unsubscribe", method="POST", data={"email": newsletter})
+        self.assertEqual(unsub.status, 200)
+        resub = self.api("/api/newsletter/subscribe", method="POST", data={"email": newsletter})
+        self.assertEqual(resub.status, 200)
+
+
+    def test_13_private_catalog_category_invariants_and_rbac(self):
+        self.assertEqual(self.api("/api/products?status=draft").status, 403)
+        categories = self.api("/api/categories")
+        self.assertEqual(categories.status, 200)
+        self.assertFalse(any(item["slug"] == "qa-cachee" for item in categories.json()))
+
+        admin_token = self.login("qa-admin@test.invalid", PASSWORD, staff=True)
+        draft_list = self.api("/api/products?status=draft", admin_token)
+        self.assertEqual(draft_list.status, 200)
+        draft = next(item for item in draft_list.json()["products"] if item["name"] == "Brouillon privé QA")
+        self.assertEqual(self.api(f"/api/products/{draft['id']}").status, 404)
+
+        admin_categories = self.api("/api/categories", admin_token)
+        self.assertEqual(admin_categories.status, 200)
+        self.assertTrue(any(item["slug"] == "qa-cachee" for item in admin_categories.json()))
+
+        parent = self.api(
+            "/api/categories",
+            admin_token,
+            method="POST",
+            data={"name": "QA Parent cycle", "slug": "qa-parent-cycle", "status": "active"},
+        )
+        self.assertEqual(parent.status, 201)
+        child = self.api(
+            "/api/categories",
+            admin_token,
+            method="POST",
+            data={
+                "name": "QA Child cycle",
+                "slug": "qa-child-cycle",
+                "status": "active",
+                "parentId": parent.json()["id"],
+            },
+        )
+        self.assertEqual(child.status, 201)
+        cycle = self.api(
+            f"/api/categories/{parent.json()['id']}",
+            admin_token,
+            method="PUT",
+            data={"parentId": child.json()["id"]},
+        )
+        self.assertEqual(cycle.status, 409)
+        self.assertEqual(self.api(f"/api/categories/{child.json()['id']}", admin_token, method="DELETE").status, 204)
+        self.assertEqual(self.api(f"/api/categories/{parent.json()['id']}", admin_token, method="DELETE").status, 204)
+
+        invalid = self.api(
+            "/api/admin/users",
+            admin_token,
+            method="POST",
+            data={
+                "email": "qa-broken-seller@test.invalid",
+                "name": "Broken Seller",
+                "password": PASSWORD,
+                "role": "seller",
+            },
+        )
+        self.assertEqual(invalid.status, 400)
+
+        self.page.evaluate("localStorage.clear(); sessionStorage.clear()")
+        seller_token = self.login("qa-seller@test.invalid", PASSWORD, staff=True)
+        own_drafts = self.api("/api/products?status=draft", seller_token)
+        self.assertEqual(own_drafts.status, 200)
+        self.assertTrue(any(item["id"] == draft["id"] for item in own_drafts.json()["products"]))
+        self.assertEqual(self.api(f"/api/products/{draft['id']}", seller_token).status, 200)
+
+    def test_14_full_return_manual_refund_and_restock(self):
+        buyer_token = self.login("qa-buyer@test.invalid", PASSWORD)
+        orders = self.api("/api/account/orders?limit=100", buyer_token)
+        self.assertEqual(orders.status, 200)
+        order = next(item for item in orders.json()["orders"] if item["orderNumber"] == "QA-RETURN-DELIVERED")
+        product_id = order["items"][0]["product"]["id"]
+        before_stock_response = self.api(f"/api/products/{product_id}")
+        self.assertEqual(before_stock_response.status, 200)
+        before_stock = before_stock_response.json()["stock"]
+
+        created = self.api(
+            f"/api/account/orders/{order['id']}/return-request",
+            buyer_token,
+            method="POST",
+            data={"reason": "Produit QA à retourner", "description": "Retour fictif intégral pour recette."},
+        )
+        self.assertEqual(created.status, 201)
+        return_id = created.json()["id"]
+
+        self.page.evaluate("localStorage.clear(); sessionStorage.clear()")
+        admin_token = self.login("qa-admin@test.invalid", PASSWORD, staff=True)
+        approved = self.api(f"/api/admin/returns/{return_id}/approve", admin_token, method="POST")
+        self.assertEqual(approved.status, 200)
+        self.assertTrue(mail_received("qa-buyer@test.invalid", "Mise à jour de votre retour"))
+
+        forbidden_reject = self.api(
+            f"/api/admin/returns/{return_id}/reject",
+            admin_token,
+            method="POST",
+            data={"reason": "Tentative après approbation"},
+        )
+        self.assertEqual(forbidden_reject.status, 409)
+
+        requested = self.api(
+            f"/api/admin/returns/{return_id}/process-refund",
+            admin_token,
+            method="POST",
+            data={"itemsReceived": True},
+        )
+        self.assertEqual(requested.status, 202)
+        refund = requested.json()["refund"]
+        self.assertEqual(refund["status"], "MANUAL_REQUIRED")
+
+        confirmed = self.api(
+            f"/api/admin/refunds/{refund['id']}/confirm-manual",
+            admin_token,
+            method="POST",
+            data={
+                "confirmed": True,
+                "reference": "QA-MANUAL-REFUND-001",
+                "amount": refund["amount"],
+                "currency": refund["currency"],
+            },
+        )
+        self.assertEqual(confirmed.status, 200)
+        self.assertEqual(confirmed.json()["refund"]["status"], "COMPLETED")
+
+        repeated = self.api(
+            f"/api/admin/refunds/{refund['id']}/confirm-manual",
+            admin_token,
+            method="POST",
+            data={
+                "confirmed": True,
+                "reference": "QA-MANUAL-REFUND-001",
+                "amount": refund["amount"],
+                "currency": refund["currency"],
+            },
+        )
+        self.assertEqual(repeated.status, 200)
+
+        after_order = self.api(f"/api/account/orders/{order['id']}", buyer_token)
+        self.assertEqual(after_order.status, 200)
+        self.assertEqual(after_order.json()["status"], "REFUNDED")
+        after_stock = self.api(f"/api/products/{product_id}").json()["stock"]
+        self.assertEqual(after_stock, before_stock + 1)
+
+        returns = self.api("/api/account/returns", buyer_token)
+        self.assertEqual(returns.status, 200)
+        self.assertTrue(any(item["id"] == return_id and item["status"] == "completed" for item in returns.json()["returns"]))
+
+        self.page.evaluate("localStorage.clear(); sessionStorage.clear()")
+        seller_token = self.login("qa-seller@test.invalid", PASSWORD, staff=True)
+        profile = self.api("/api/sellers/me/profile", seller_token)
+        self.assertEqual(profile.status, 200)
+        self.assertEqual(profile.json()["totalSales"], 0)
+        self.assertEqual(profile.json()["totalEarnings"], 0)
+
+    def test_15_privileged_role_change_revokes_existing_sessions(self):
+        admin_token = self.login("qa-admin@test.invalid", PASSWORD, staff=True)
+        email = "qa-manager@test.invalid"
+        created = self.api(
+            "/api/admin/users",
+            admin_token,
+            method="POST",
+            data={"email": email, "name": "QA Manager", "password": PASSWORD, "role": "manager"},
+        )
+        self.assertEqual(created.status, 201)
+        manager_id = created.json()["id"]
+
+        self.page.goto(mail_link(email, "/compte/verifier-email"))
+        manager_password = PASSWORD + "m"
+        self.page.get_by_label("Nouveau mot de passe").fill(manager_password)
+        self.page.get_by_role("button", name="Confirmer", exact=True).click()
+        expect(self.page.get_by_role("status")).to_contain_text("Adresse verifiee")
+
+        self.page.evaluate("localStorage.clear(); sessionStorage.clear()")
+        manager_token = self.login(email, manager_password, staff=True, expected_path="/admin/dashboard")
+        denied_create = self.api(
+            "/api/admin/users",
+            manager_token,
+            method="POST",
+            data={
+                "email": "qa-manager-created@test.invalid",
+                "name": "No",
+                "password": PASSWORD,
+                "role": "manager",
+            },
+        )
+        self.assertEqual(denied_create.status, 403)
+
+        changed = self.api(
+            f"/api/admin/users/{manager_id}/role",
+            admin_token,
+            method="PUT",
+            data={"role": "user"},
+        )
+        self.assertEqual(changed.status, 200)
+        self.assertEqual(self.api("/api/auth/me", manager_token).status, 401)
 
 
 if __name__ == "__main__":

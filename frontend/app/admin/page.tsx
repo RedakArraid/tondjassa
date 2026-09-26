@@ -9,7 +9,7 @@ export default function AdminPage() {
 
   useEffect(() => {
     // Vérifier si l'utilisateur est connecté
-    const token = localStorage.getItem('admin_token');
+    const token = sessionStorage.getItem('admin_token');
     
     if (token) {
       // Si connecté, rediriger vers le dashboard CRUD

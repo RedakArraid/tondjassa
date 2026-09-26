@@ -65,7 +65,7 @@ export default function CommandesPage() {
   }, [isAuthenticated, isLoading, router]);
 
   const fetchOrders = useCallback(async (p: number) => {
-    const token = localStorage.getItem('mandemarket_customer_token');
+    const token = sessionStorage.getItem('mandemarket_customer_token');
     setLoading(true);
     setError(null);
     try {

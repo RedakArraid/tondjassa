@@ -275,7 +275,7 @@ router.post('/change-password', requireAuth, async (req, res) => {
   try {
     const { oldPassword, newPassword } = req.body;
     if (!oldPassword || !passwordRule.safeParse(newPassword).success) {
-      return res.status(400).json({ error: 'L’ancien mot de passe et un nouveau mot de passe d’au moins 8 caractères sont requis.' });
+      return res.status(400).json({ error: 'L’ancien mot de passe et un nouveau mot de passe d’au moins 12 caractères sont requis.' });
     }
 
     const user = await db.user.findUnique({ where: { id: req.user.userId } });

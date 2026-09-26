@@ -77,11 +77,27 @@ jobs:
       - run: docker build --pull -t tondjassa-frontend:ci frontend
       - name: Start production images with isolated services
         run: |
-          printf 'CI_JWT_SECRET=%s\n' "$(openssl rand -hex 32)" > "$RUNNER_TEMP/smoke.env"
+          printf 'CI_JWT_SECRET=%s\nCI_METRICS_TOKEN=%s\n' "$(openssl rand -hex 32)" "$(openssl rand -hex 32)" > "$RUNNER_TEMP/smoke.env"
           chmod 600 "$RUNNER_TEMP/smoke.env"
           docker compose --env-file "$RUNNER_TEMP/smoke.env" -p tondjassa-ci -f .github/compose.smoke.yml up -d --wait --wait-timeout 150
           curl --fail --silent http://127.0.0.1:4002/health/ready
+          metrics_token=$(sed -n 's/^CI_METRICS_TOKEN=//p' "$RUNNER_TEMP/smoke.env")
+          curl --fail --silent -H "Authorization: Bearer $metrics_token" http://127.0.0.1:4002/api/internal/metrics | grep -q 'mandemarket_http_requests_total'
           curl --fail --silent http://127.0.0.1:3000/ > /dev/null
+      - name: Verify application containers are sandboxed
+        run: |
+          compose=(docker compose --env-file "$RUNNER_TEMP/smoke.env" -p tondjassa-ci -f .github/compose.smoke.yml)
+          for service in backend worker frontend; do
+            cid="$("${compose[@]}" ps -q "$service")"
+            test -n "$cid"
+            test "$(docker inspect -f '{{.HostConfig.ReadonlyRootfs}}' "$cid")" = true
+            docker inspect -f '{{json .HostConfig.SecurityOpt}}' "$cid" | grep -q 'no-new-privileges'
+            docker inspect -f '{{json .HostConfig.CapDrop}}' "$cid" | grep -q '"ALL"'
+            "${compose[@]}" exec -T "$service" sh -c 'test "$(id -u)" -ne 0'
+          done
+          "${compose[@]}" exec -T backend sh -c 'touch /app/tmp/runtime-write && ! touch /app/runtime-must-stay-readonly 2>/dev/null'
+          "${compose[@]}" exec -T worker sh -c 'touch /app/tmp/worker-write && ! touch /app/worker-must-stay-readonly 2>/dev/null'
+          "${compose[@]}" exec -T frontend sh -c 'touch /app/.next/cache/frontend-write && ! touch /app/frontend-must-stay-readonly 2>/dev/null'
       - name: Verify backup and restore on an isolated target
         env:
           ENV_FILE: ${{ runner.temp }}/smoke.env
@@ -100,6 +116,23 @@ jobs:
           bash backend/scripts/restore-db.sh "$backup"
           test "$("${compose[@]}" exec -T postgres psql -U postgres -d "$RESTORE_DATABASE" -Atc "SELECT count(*) FROM smoke_backup WHERE marker='restore-proof'")" = 1
           "${compose[@]}" exec -T backend npm run production:preflight
+      - name: Bounded load smoke against production images
+        env:
+          LOAD_API_URL: http://127.0.0.1:4002
+          LOAD_WEB_URL: http://127.0.0.1:3000
+          LOAD_REQUESTS: '60'
+          LOAD_CONCURRENCY: '12'
+          LOAD_MAX_P95_MS: '1500'
+          LOAD_RESULT: qa-results/load-smoke.json
+        run: node scripts/load-smoke.mjs
+      - name: Preserve load-smoke evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: load-smoke-${{ github.sha }}
+          path: qa-results/load-smoke.json
+          if-no-files-found: warn
+          retention-days: 14
       - name: Container diagnostics
         if: failure()
         run: docker compose --env-file "$RUNNER_TEMP/smoke.env" -p tondjassa-ci -f .github/compose.smoke.yml logs --tail=100 || true
@@ -110,3 +143,63 @@ jobs:
             docker compose --env-file "$RUNNER_TEMP/smoke.env" -p tondjassa-ci -f .github/compose.smoke.yml down -v --remove-orphans
             rm -f "$RUNNER_TEMP/smoke.env"
           fi
+
+  evidence:
+    name: Release candidate evidence
+    needs: [quality, integration, containers]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+        with: { persist-credentials: false }
+      - name: Build immutable release evidence
+        run: |
+          mkdir -p release-evidence
+          sha256sum \
+            .nvmrc \
+            package-lock.json \
+            backend/package-lock.json \
+            frontend/package-lock.json \
+            backend/prisma/schema.prisma \
+            backend/Dockerfile \
+            frontend/Dockerfile \
+            docker-compose.prod.yml \
+            > release-evidence/checksums.sha256
+          export RELEASE_SHA="$GITHUB_SHA"
+          export RELEASE_REF="$GITHUB_REF"
+          export RELEASE_RUN_ID="$GITHUB_RUN_ID"
+          export RELEASE_RUN_ATTEMPT="$GITHUB_RUN_ATTEMPT"
+          export RELEASE_REPOSITORY="$GITHUB_REPOSITORY"
+          node <<'NODE'
+          const fs = require('fs');
+          const root = require('./package.json');
+          const backend = require('./backend/package.json');
+          const frontend = require('./frontend/package.json');
+          const evidence = {
+            schema: 1,
+            sha: process.env.RELEASE_SHA,
+            ref: process.env.RELEASE_REF,
+            repository: process.env.RELEASE_REPOSITORY,
+            workflowRunId: process.env.RELEASE_RUN_ID,
+            workflowRunAttempt: Number(process.env.RELEASE_RUN_ATTEMPT),
+            generatedAt: new Date().toISOString(),
+            gates: {
+              quality: 'success',
+              postgresqlIntegration: 'success',
+              productionContainersRestoreAndLoadSmoke: 'success'
+            },
+            versions: {
+              root: root.version || null,
+              backend: backend.version || null,
+              frontend: frontend.version || null,
+              node: fs.readFileSync('.nvmrc', 'utf8').trim()
+            },
+            deploysProduction: false
+          };
+          fs.writeFileSync('release-evidence/release-candidate.json', JSON.stringify(evidence, null, 2) + '\n');
+          NODE
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-candidate-${{ github.sha }}
+          path: release-evidence/
+          retention-days: 30

@@ -2,16 +2,17 @@ const express = require('express');
 const { z } = require('zod');
 const router = express.Router();
 const db = require('./db');
+const { optionalAuth } = require('./middleware.auth');
+const ReviewService = require('./services/review.service');
 
 // Zod schema pour validation
 const reviewSchema = z.object({
   productId: z.number().int().positive(),
-  customerName: z.string().min(1),
-  customerEmail: z.string().email().optional().or(z.literal('')),
+  customerName: z.string().trim().min(1).max(100).optional(),
+  customerEmail: z.string().trim().email().optional().or(z.literal('')),
   rating: z.number().int().min(1).max(5),
-  title: z.string().optional(),
-  comment: z.string().min(1),
-  isVerified: z.boolean().optional(),
+  title: z.string().trim().max(150).optional(),
+  comment: z.string().trim().min(1).max(5000),
 });
 
 // GET /api/reviews/:productId - Récupérer tous les avis d'un produit
@@ -41,97 +42,21 @@ router.get('/:productId', async (req, res) => {
 });
 
 // POST /api/reviews - Créer un nouvel avis (MM-BE-071)
-router.post('/', async (req, res) => {
+router.post('/', optionalAuth, async (req, res) => {
   try {
     const data = reviewSchema.parse(req.body);
-    const cleanEmail = data.customerEmail ? data.customerEmail.toLowerCase().trim() : null;
-    
-    // Vérifier que le produit existe
-    const product = await db.product.findUnique({
-      where: { id: data.productId },
-      include: { seller: true },
-    });
-    if (!product) {
-      return res.status(404).json({ error: 'Produit non trouvé' });
+    const result = await ReviewService.createReview(db, data, req.user || null);
+    res.status(201).json(result);
+  } catch (error) {
+    if (error?.name === 'ZodError') {
+      return res.status(400).json({ error: 'Données invalides', details: error.errors });
     }
-
-    // 1. Limiter un avis par acheteur pour ce produit
-    if (cleanEmail) {
-      const existing = await db.review.findFirst({
-        where: {
-          productId: data.productId,
-          customerEmail: cleanEmail,
-        },
-      });
-      if (existing) {
-        return res.status(409).json({ error: 'Vous avez déjà évalué ce produit.' });
-      }
+    if (error?.code === 'P2002') {
+      return res.status(409).json({ error: 'Vous avez déjà évalué ce produit.' });
     }
-
-    // 2. Calculer isVerified côté serveur (achat vérifié et livré/expédié)
-    let isVerified = false;
-    if (cleanEmail) {
-      const deliveredOrder = await db.order.findFirst({
-        where: {
-          customer: { email: cleanEmail },
-          status: { in: ['DELIVERED', 'SHIPPED'] },
-          items: { some: { productId: data.productId } },
-        },
-      });
-      isVerified = Boolean(deliveredOrder);
-    }
-
-    // 3. Créer l'avis (approuvé automatiquement si achat vérifié, sinon en attente de modération)
-    const reviewStatus = isVerified ? 'approved' : 'pending';
-
-    const review = await db.review.create({
-      data: {
-        productId: data.productId,
-        customerName: data.customerName.trim(),
-        customerEmail: cleanEmail,
-        rating: data.rating,
-        title: data.title ? data.title.trim() : null,
-        comment: data.comment.trim(),
-        isVerified,
-        status: reviewStatus,
-      },
-    });
-
-    // 4. Recalculer les notes produit et vendeur si l'avis est approuvé
-    if (reviewStatus === 'approved' && product.sellerId) {
-      const allSellerReviews = await db.review.findMany({
-        where: {
-          product: { sellerId: product.sellerId },
-          status: 'approved',
-        },
-        select: { rating: true },
-      });
-      const avg = allSellerReviews.length > 0
-        ? allSellerReviews.reduce((s, r) => s + r.rating, 0) / allSellerReviews.length
-        : review.rating;
-
-      await db.seller.update({
-        where: { id: product.sellerId },
-        data: {
-          rating: parseFloat(avg.toFixed(2)),
-          reviewCount: allSellerReviews.length,
-        },
-      });
-    }
-
-    res.status(201).json({
-      review,
-      message: isVerified
-        ? 'Votre avis vérifié a été publié immédiatement.'
-        : 'Votre avis a été soumis et sera validé par notre équipe après modération.',
-    });
-  } catch (err) {
-    console.error('Erreur lors de la création de l\'avis:', err);
-    if (err.errors) {
-      res.status(400).json({ error: 'Données invalides', details: err.errors });
-    } else {
-      res.status(400).json({ error: err.message || 'Erreur lors de la création de l\'avis' });
-    }
+    const status = error?.statusCode || 500;
+    if (status >= 500) console.error('Erreur lors de la création de l\'avis:', error);
+    res.status(status).json({ error: status >= 500 ? 'Erreur serveur' : error.message });
   }
 });
 

@@ -74,6 +74,12 @@ export default function PublicFooter() {
                 </button>
               </form>
             )}
+            {!subscribed && (
+              <p className="text-[11px] text-gray-400 mt-2">
+                En vous inscrivant, vous acceptez de recevoir nos offres. Vous pourrez vous désinscrire à tout moment.{' '}
+                <Link href="/confidentialite" className="underline hover:text-white">Confidentialité</Link>
+              </p>
+            )}
             {error && <p className="text-red-400 text-xs mt-1.5">{error}</p>}
           </div>
         </div>

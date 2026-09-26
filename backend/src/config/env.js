@@ -12,6 +12,9 @@ const envSchema = z.object({
   CORS_ORIGIN: z.string().default('http://localhost:3000,http://frontend:3000,http://127.0.0.1:3000'),
   RATE_LIMIT_WINDOW_MS: z.coerce.number().default(15 * 60 * 1000),
   RATE_LIMIT_MAX_REQUESTS: z.coerce.number().default(100),
+  AUTH_RATE_LIMIT_WINDOW_MS: z.coerce.number().default(15 * 60 * 1000),
+  AUTH_RATE_LIMIT_MAX_REQUESTS: z.coerce.number().default(20),
+  METRICS_TOKEN: z.string().min(32, 'METRICS_TOKEN doit contenir au moins 32 caracteres').optional(),
   
   TRUST_PROXY: z.string().optional(),
   CHECKOUT_COUNTRIES: z.string().optional(),
@@ -74,7 +77,7 @@ function loadConfig() {
   if (env.NODE_ENV === 'production') {
     const missing = [];
     if (env.JWT_SECRET.length < 32 || /changeme|change|default|test|dev-jwt/i.test(env.JWT_SECRET)) missing.push('JWT_SECRET fort (32 caracteres minimum)');
-    for (const field of ['TRUST_PROXY', 'CHECKOUT_COUNTRIES', 'SMTP_HOST', 'SMTP_USER', 'SMTP_PASS', 'CLOUDINARY_CLOUD_NAME', 'CLOUDINARY_API_KEY', 'CLOUDINARY_API_SECRET']) {
+    for (const field of ['TRUST_PROXY', 'CHECKOUT_COUNTRIES', 'SMTP_HOST', 'SMTP_USER', 'SMTP_PASS', 'CLOUDINARY_CLOUD_NAME', 'CLOUDINARY_API_KEY', 'CLOUDINARY_API_SECRET', 'METRICS_TOKEN']) {
       if (!env[field]) missing.push(field);
     }
     for (const field of ['NEXT_PUBLIC_SITE_URL', 'BACKEND_URL']) {

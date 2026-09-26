@@ -35,7 +35,7 @@ export default function AvisPage() {
   }, []);
 
   const filtered = reviews.filter((r) => {
-    const hasReply = r.comment?.includes('[Réponse');
+    const hasReply = Boolean(r.sellerReply);
     if (filter === '5 étoiles') return r.rating === 5;
     if (filter === '4 étoiles') return r.rating === 4;
     if (filter === '3 étoiles et moins') return r.rating <= 3;
@@ -93,7 +93,7 @@ export default function AvisPage() {
         ) : (
           <div className="space-y-4 divide-y divide-gray-100">
             {filtered.map((rev) => {
-              const hasReply = rev.comment?.includes('[Réponse');
+              const hasReply = Boolean(rev.sellerReply);
               return (
                 <div key={rev.id} className="pt-4 first:pt-0 space-y-3">
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
@@ -124,12 +124,18 @@ export default function AvisPage() {
                     {rev.comment || 'Note attribuée sans commentaire écrit.'}
                   </div>
 
+                  {rev.sellerReply && (
+                    <div className="rounded-xl border border-orange-100 bg-orange-50 p-3 text-sm text-gray-700 whitespace-pre-line">
+                      <span className="font-semibold text-orange-700">Votre réponse :</span> {rev.sellerReply}
+                    </div>
+                  )}
+
                   <div className="flex items-center gap-3">
                     <button
                       type="button"
                       onClick={() => {
                         setReplyModalReview(rev);
-                        setReplyText('');
+                        setReplyText(rev.sellerReply || '');
                       }}
                       className="px-3.5 py-1.5 text-xs font-semibold rounded-lg bg-brand-navy text-white hover:bg-brand-navy/90 transition shadow-sm"
                     >
