@@ -54,7 +54,7 @@ const COUPON_TYPES: {
     description: 'Montant financé par votre boutique, appliqué uniquement à vos articles.', defaultCode: 'CADEAU5000' },
 ];
 
-function typeMetafunction typeMeta(id: CouponTypeId) {
+function typeMeta(id: CouponTypeId) {
   return COUPON_TYPES.find((t) => t.id === id) || COUPON_TYPES[0];
 }
 
