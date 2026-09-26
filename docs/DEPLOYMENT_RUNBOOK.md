@@ -78,6 +78,10 @@ dc run --rm --no-deps --entrypoint /app/node_modules/.bin/prisma \
   mandemarket-backend migrate deploy
 dc run --rm --no-deps --entrypoint /app/node_modules/.bin/prisma \
   mandemarket-backend migrate status
+
+docker exec -i mandemarket-db sh -lc \
+  'psql -X -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB"' \
+  < backend/scripts/reconcile-legacy-inventory-reservations.sql
 ```
 
 Both reconciliation scripts are idempotent. The first one creates the historical
@@ -89,6 +93,12 @@ tables while replacing the legacy `RESTRICT`/`SET NULL` actions with the baselin
 intentionally fails the deployment instead of waiting indefinitely. Keep
 maintenance enabled until `migrate status`, the final Prisma schema diff, the
 preflight and the HTTP readiness smoke all pass.
+
+The inventory reconciliation runs only after the hardening migration has added
+the stock lifecycle markers. It derives reservations only from active `PENDING`,
+`CONFIRMED` and `PROCESSING` orders, aborts if physical stock is insufficient,
+never changes physical quantities, orders or payments, and records a non-PII
+audit row. A second execution is a no-op apart from verification.
 
 The preflight command is read-only after entrypoint migration and must succeed.
 It checks inventory consistency, duplicate sales and unresolved refunds. Investigate
