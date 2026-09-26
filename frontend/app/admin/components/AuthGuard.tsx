@@ -21,7 +21,7 @@ export default function AuthGuard({ children }: AuthGuardProps) {
     setLoading(true);
     setNetworkError(null);
 
-    const token = localStorage.getItem('admin_token');
+    const token = sessionStorage.getItem('admin_token');
     if (!token) {
       router.push('/admin/login');
       return;
@@ -52,8 +52,8 @@ export default function AuthGuard({ children }: AuthGuardProps) {
         setIsAuthenticated(true);
       } else if (response.status === 401 || response.status === 403) {
         // Token expiré ou révoqué
-        localStorage.removeItem('admin_token');
-        localStorage.removeItem('admin_user');
+        sessionStorage.removeItem('admin_token');
+        sessionStorage.removeItem('admin_user');
         router.push('/admin/login?error=expired');
       } else {
         setNetworkError('Erreur serveur lors de la vérification des droits');

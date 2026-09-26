@@ -349,8 +349,8 @@ export default function CheckoutPage() {
       const orderId = data.orderId ?? data.id ?? data.order?.id;
       const orderRef = data.orderNumber || orderId;
       if (!orderId) throw new Error('Identifiant de commande non reçu.');
-      localStorage.setItem(`mm_order_access_${orderId}`, attempt.secret);
-      localStorage.setItem(`mm_order_access_${orderRef}`, attempt.secret);
+      sessionStorage.setItem(`mm_order_access_${orderId}`, attempt.secret);
+      sessionStorage.setItem(`mm_order_access_${orderRef}`, attempt.secret);
 
       if (form.paymentMethod === 'cash_on_delivery') {
         sessionStorage.removeItem('mm_checkout_attempt');
@@ -369,7 +369,7 @@ export default function CheckoutPage() {
       if (!payRes.ok) throw new Error(payData.error ?? "Erreur d'initiation du paiement.");
       if (!payData.paymentUrl) throw new Error('URL de paiement non reçue.');
 
-      if (payData.transactionId) localStorage.setItem(`mm_order_access_${payData.transactionId}`, attempt.secret);
+      if (payData.transactionId) sessionStorage.setItem(`mm_order_access_${payData.transactionId}`, attempt.secret);
       sessionStorage.removeItem('mm_checkout_attempt');
       checkoutCompleted.current = true;
       clearCart();

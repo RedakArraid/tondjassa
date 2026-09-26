@@ -101,8 +101,8 @@ export default function AdminDashboard() {
 
   // Vérifier l'authentification au chargement (admin/manager uniquement, pas vendeurs)
   useEffect(() => {
-    const savedToken = localStorage.getItem('admin_token');
-    const savedUser = localStorage.getItem('admin_user');
+    const savedToken = sessionStorage.getItem('admin_token');
+    const savedUser = sessionStorage.getItem('admin_user');
     
     if (!savedToken || !savedUser) {
       router.push('/admin/login');
@@ -218,8 +218,8 @@ export default function AdminDashboard() {
 
   const handleLogout = async () => {
     try { await logoutSession('staff'); } catch (error) { window.alert(error instanceof Error ? error.message : 'Deconnexion non confirmee'); return; }
-    localStorage.removeItem('admin_token');
-    localStorage.removeItem('admin_user');
+    sessionStorage.removeItem('admin_token');
+    sessionStorage.removeItem('admin_user');
     setToken(null);
     setUser(null);
     router.push('/admin/login');

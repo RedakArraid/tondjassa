@@ -138,3 +138,19 @@ Le même workflow exécute aussi `e2e/http_concurrency_smoke.py` : 90 lectures
 concurrentes modestes sur frontend, catalogue et readiness. Ce smoke détecte les
 5xx et erreurs de connexion évidents ; ce n'est ni un benchmark de capacité ni
 un engagement de latence.
+
+
+## Portée de stockage des secrets navigateur
+
+Les JWT d'accès client, vendeur et administration ainsi que les capacités d'accès
+aux commandes invitées sont conservés uniquement dans `sessionStorage`. Ils ne
+doivent jamais être écrits dans `localStorage`, afin qu'une fermeture d'onglet
+supprime ces secrets côté navigateur. La session longue durée reste portée par un
+cookie de renouvellement `HttpOnly`, `Secure` en production et contrôlé côté
+serveur. Cette mesure réduit la persistance d'un secret exposable à du JavaScript ;
+elle ne remplace pas la CSP ni la prévention des XSS.
+
+La suite frontend contient un contrôle statique qui échoue si ces clés sensibles
+réapparaissent dans un appel `localStorage`. La recette navigateur vérifie aussi
+qu'après connexion le jeton est présent dans la session de l'onglet et absent du
+stockage persistant.

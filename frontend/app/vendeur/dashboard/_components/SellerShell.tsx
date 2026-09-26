@@ -80,7 +80,7 @@ export default function SellerShell({ children }: { children: React.ReactNode })
         router.push('/admin/login');
         return;
       }
-      const userStr = typeof window !== 'undefined' ? localStorage.getItem('admin_user') : null;
+      const userStr = typeof window !== 'undefined' ? sessionStorage.getItem('admin_user') : null;
       if (userStr) {
         try {
           const u = JSON.parse(userStr);
@@ -117,8 +117,8 @@ export default function SellerShell({ children }: { children: React.ReactNode })
   const handleLogout = async () => {
     try { await logoutSession('staff'); } catch (error) { window.alert(error instanceof Error ? error.message : 'Deconnexion non confirmee'); return; }
     if (typeof window !== 'undefined') {
-      localStorage.removeItem('admin_token');
-      localStorage.removeItem('admin_user');
+      sessionStorage.removeItem('admin_token');
+      sessionStorage.removeItem('admin_user');
     }
     router.push('/admin/login');
   };
@@ -159,7 +159,7 @@ export default function SellerShell({ children }: { children: React.ReactNode })
       >
         <div className="p-5 border-b border-white/10">
           <p className="text-lg font-extrabold mb-3">
-            <span className="text-white">Mandin</span>
+            <span className="text-white">Mande</span>
             <span className="text-brand-orange-light">Market</span>
           </p>
           <div className="flex items-center gap-3">

@@ -70,8 +70,8 @@ export default function LoginPage() {
           if (res.ok && data.token) {
             if (data.user?.role === 'seller') {
               // Vendeur → connecter et rediriger vers son dashboard
-              localStorage.setItem('admin_token', data.token);
-              localStorage.setItem('admin_user', JSON.stringify(data.user));
+              sessionStorage.setItem('admin_token', data.token);
+              sessionStorage.setItem('admin_user', JSON.stringify(data.user));
               router.push('/vendeur/dashboard');
             } else {
               // Admin / manager → ce portail n'est pas fait pour eux

@@ -145,20 +145,20 @@ class ApiService {
   // Gestion du token d'authentification
   getAuthToken(): string | null {
     if (typeof window !== 'undefined') {
-      return localStorage.getItem('admin_token');
+      return sessionStorage.getItem('admin_token');
     }
     return null;
   }
 
   setAuthToken(token: string) {
     if (typeof window !== 'undefined') {
-      localStorage.setItem('admin_token', token);
+      sessionStorage.setItem('admin_token', token);
     }
   }
 
   removeAuthToken() {
     if (typeof window !== 'undefined') {
-      localStorage.removeItem('admin_token');
+      sessionStorage.removeItem('admin_token');
     }
   }
 
@@ -676,7 +676,7 @@ export class ReviewService {
     comment: string;
   }) {
     const customerToken = typeof window !== 'undefined'
-      ? localStorage.getItem('mandemarket_customer_token')
+      ? sessionStorage.getItem('mandemarket_customer_token')
       : null;
     const response = await fetch(`${API_BASE_URL}/api/reviews`, {
       method: 'POST',
@@ -765,7 +765,7 @@ export class AdminService {
 export class AccountService {
   private static getCustomerToken(): string | null {
     if (typeof window !== 'undefined') {
-      return localStorage.getItem('mandemarket_customer_token');
+      return sessionStorage.getItem('mandemarket_customer_token');
     }
     return null;
   }

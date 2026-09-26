@@ -116,8 +116,9 @@ class BrowserAcceptance(unittest.TestCase):
         target = expected_path or ("/vendeur/dashboard" if email == "qa-seller@test.invalid" else "/admin/dashboard" if staff else "/compte/dashboard")
         expect(self.page).to_have_url(re.compile(re.escape(BASE + target)))
         key = "admin_token" if staff else TOKEN_KEY
-        self.page.wait_for_function("key => !!localStorage.getItem(key)", arg=key)
-        return self.page.evaluate("key => localStorage.getItem(key)", key)
+        self.page.wait_for_function("key => !!sessionStorage.getItem(key)", arg=key)
+        self.assertIsNone(self.page.evaluate("key => localStorage.getItem(key)", key))
+        return self.page.evaluate("key => sessionStorage.getItem(key)", key)
 
     def add_to_cart(self):
         self.page.goto(BASE + "/boutique/1")
@@ -137,6 +138,7 @@ class BrowserAcceptance(unittest.TestCase):
             self.page.locator('input[name="' + name + '"]').fill(value)
         self.page.get_by_role("button", name="Créer mon compte", exact=True).click()
         expect(self.page).to_have_url(BASE + "/compte/verifier-email")
+        self.assertIsNone(self.page.evaluate("key => sessionStorage.getItem(key)", TOKEN_KEY))
         self.assertIsNone(self.page.evaluate("key => localStorage.getItem(key)", TOKEN_KEY))
         denied = self.api("/api/account/login", method="POST", data={"email": email, "password": PASSWORD})
         self.assertEqual(denied.status, 403)
@@ -152,13 +154,13 @@ class BrowserAcceptance(unittest.TestCase):
         self.assertTrue(cookies[0]["httpOnly"] and cookies[0]["secure"])
         self.assertEqual(cookies[0]["sameSite"], "Lax")
         # Exercise renewal with a real refresh cookie, without waiting 15 minutes.
-        self.page.evaluate("key => localStorage.setItem(key, 'invalid.expired.token')", TOKEN_KEY)
+        self.page.evaluate("key => sessionStorage.setItem(key, 'invalid.expired.token')", TOKEN_KEY)
         self.page.reload()
-        self.page.wait_for_function("key => { const t=localStorage.getItem(key); return t && t !== 'invalid.expired.token'; }", arg=TOKEN_KEY)
-        active = self.page.evaluate("key => localStorage.getItem(key)", TOKEN_KEY)
+        self.page.wait_for_function("key => { const t=sessionStorage.getItem(key); return t && t !== 'invalid.expired.token'; }", arg=TOKEN_KEY)
+        active = self.page.evaluate("key => sessionStorage.getItem(key)", TOKEN_KEY)
         self.assertEqual(self.api("/api/account/me", active).status, 200)
         self.page.get_by_role("button", name=re.compile("Se d.connecter", re.I)).first.click()
-        self.page.wait_for_function("key => !localStorage.getItem(key)", arg=TOKEN_KEY)
+        self.page.wait_for_function("key => !sessionStorage.getItem(key)", arg=TOKEN_KEY)
         self.assertEqual(self.api("/api/account/me", active).status, 401)
         self.page.goto(BASE + "/compte/mot-de-passe-oublie")
         self.page.get_by_label("Email", exact=True).fill(email)
@@ -218,7 +220,7 @@ class BrowserAcceptance(unittest.TestCase):
         token = self.login("qa-admin@test.invalid", PASSWORD, staff=True)
         self.assertEqual(self.api("/api/admin/refunds", token).status, 200)
         self.assertEqual(self.api("/api/auth/logout", token, method="POST").status, 200)
-        self.page.evaluate("localStorage.clear()")
+        self.page.evaluate("localStorage.clear(); sessionStorage.clear()")
         token = self.login("qa-seller@test.invalid", PASSWORD, staff=True)
         self.assertEqual(self.api("/api/admin/refunds", token).status, 403)
         expect(self.page.get_by_text("QA Boutique", exact=True).first).to_be_visible()
@@ -355,7 +357,7 @@ class BrowserAcceptance(unittest.TestCase):
         )
         self.assertEqual(duplicate.status, 409)
 
-        self.page.evaluate("localStorage.clear()")
+        self.page.evaluate("localStorage.clear(); sessionStorage.clear()")
         seller_token = self.login("qa-seller@test.invalid", PASSWORD, staff=True)
         reply = self.api(
             f"/api/sellers/me/reviews/{review['id']}/reply",
@@ -399,7 +401,7 @@ class BrowserAcceptance(unittest.TestCase):
         pending_token = pending_login.json()["token"]
         self.assertEqual(self.api("/api/sellers/me/profile", pending_token).status, 403)
 
-        self.page.evaluate("localStorage.clear()")
+        self.page.evaluate("localStorage.clear(); sessionStorage.clear()")
         admin_token = self.login("qa-admin@test.invalid", PASSWORD, staff=True)
         sellers = self.api("/api/sellers/admin/all?status=pending", admin_token)
         self.assertEqual(sellers.status, 200)
@@ -414,7 +416,7 @@ class BrowserAcceptance(unittest.TestCase):
         self.assertEqual(approved.json()["commissionRate"], 12)
         self.assertTrue(mail_received(email, "est en ligne"))
 
-        self.page.evaluate("localStorage.clear()")
+        self.page.evaluate("localStorage.clear(); sessionStorage.clear()")
         seller_token = self.login(email, seller_password, staff=True, expected_path="/vendeur/dashboard")
         profile = self.api("/api/sellers/me/profile", seller_token)
         self.assertEqual(profile.status, 200)
@@ -505,7 +507,7 @@ class BrowserAcceptance(unittest.TestCase):
         )
         self.assertEqual(invalid.status, 400)
 
-        self.page.evaluate("localStorage.clear()")
+        self.page.evaluate("localStorage.clear(); sessionStorage.clear()")
         seller_token = self.login("qa-seller@test.invalid", PASSWORD, staff=True)
         own_drafts = self.api("/api/products?status=draft", seller_token)
         self.assertEqual(own_drafts.status, 200)
@@ -531,7 +533,7 @@ class BrowserAcceptance(unittest.TestCase):
         self.assertEqual(created.status, 201)
         return_id = created.json()["id"]
 
-        self.page.evaluate("localStorage.clear()")
+        self.page.evaluate("localStorage.clear(); sessionStorage.clear()")
         admin_token = self.login("qa-admin@test.invalid", PASSWORD, staff=True)
         approved = self.api(f"/api/admin/returns/{return_id}/approve", admin_token, method="POST")
         self.assertEqual(approved.status, 200)
@@ -592,7 +594,7 @@ class BrowserAcceptance(unittest.TestCase):
         self.assertEqual(returns.status, 200)
         self.assertTrue(any(item["id"] == return_id and item["status"] == "completed" for item in returns.json()["returns"]))
 
-        self.page.evaluate("localStorage.clear()")
+        self.page.evaluate("localStorage.clear(); sessionStorage.clear()")
         seller_token = self.login("qa-seller@test.invalid", PASSWORD, staff=True)
         profile = self.api("/api/sellers/me/profile", seller_token)
         self.assertEqual(profile.status, 200)
@@ -617,7 +619,7 @@ class BrowserAcceptance(unittest.TestCase):
         self.page.get_by_role("button", name="Confirmer", exact=True).click()
         expect(self.page.get_by_role("status")).to_contain_text("Adresse verifiee")
 
-        self.page.evaluate("localStorage.clear()")
+        self.page.evaluate("localStorage.clear(); sessionStorage.clear()")
         manager_token = self.login(email, manager_password, staff=True, expected_path="/admin/dashboard")
         denied_create = self.api(
             "/api/admin/users",

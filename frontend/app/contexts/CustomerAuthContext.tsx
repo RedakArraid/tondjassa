@@ -41,7 +41,7 @@ export function CustomerAuthProvider({ children }: { children: React.ReactNode }
   const [isLoading, setIsLoading] = useState(true);
 
   const refreshCustomer = useCallback(async () => {
-    const token = localStorage.getItem(TOKEN_KEY);
+    const token = sessionStorage.getItem(TOKEN_KEY);
     if (!token) {
       setCustomer(null);
       return;
@@ -54,7 +54,7 @@ export function CustomerAuthProvider({ children }: { children: React.ReactNode }
         const data = await res.json();
         setCustomer(data.customer);
       } else {
-        localStorage.removeItem(TOKEN_KEY);
+        sessionStorage.removeItem(TOKEN_KEY);
         setCustomer(null);
       }
     } catch {
@@ -65,7 +65,7 @@ export function CustomerAuthProvider({ children }: { children: React.ReactNode }
   // Au montage, valider le token si présent
   useEffect(() => {
     const validateToken = async () => {
-      const token = localStorage.getItem(TOKEN_KEY);
+      const token = sessionStorage.getItem(TOKEN_KEY);
       if (!token) {
         setIsLoading(false);
         return;
@@ -78,10 +78,10 @@ export function CustomerAuthProvider({ children }: { children: React.ReactNode }
           const data = await res.json();
           setCustomer(data.customer);
         } else {
-          localStorage.removeItem(TOKEN_KEY);
+          sessionStorage.removeItem(TOKEN_KEY);
         }
       } catch {
-        localStorage.removeItem(TOKEN_KEY);
+        sessionStorage.removeItem(TOKEN_KEY);
       } finally {
         setIsLoading(false);
       }
@@ -97,7 +97,7 @@ export function CustomerAuthProvider({ children }: { children: React.ReactNode }
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'Erreur de connexion');
-    localStorage.setItem(TOKEN_KEY, data.token);
+    sessionStorage.setItem(TOKEN_KEY, data.token);
     setCustomer(data.customer);
   }, []);
 
