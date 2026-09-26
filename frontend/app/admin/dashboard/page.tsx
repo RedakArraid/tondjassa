@@ -471,7 +471,7 @@ export default function AdminDashboard() {
           {activeSection === 'utilisateurs' && (
             <div>
               <h1 className="text-3xl font-bold text-gray-900 mb-8">Gestion des Utilisateurs</h1>
-              <UsersManager token={token!} />
+              <UsersManager token={token!} currentRole={user.role} />
             </div>
           )}
           {activeSection === 'avis' && (

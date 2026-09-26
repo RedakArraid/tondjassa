@@ -25,6 +25,14 @@ export default function LoginPage() {
   const [error, setError]               = useState<string | null>(null);
   const [isAdminOnly, setIsAdminOnly]   = useState(false); // compte admin/manager uniquement
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [notice, setNotice] = useState('');
+
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get('passwordChanged') === '1') {
+      setNotice('Mot de passe modifié. Toutes les anciennes sessions ont été déconnectées ; reconnectez-vous.');
+      window.history.replaceState(window.history.state, '', window.location.pathname);
+    }
+  }, []);
 
   useEffect(() => {
     if (!isLoading && isAuthenticated) {
@@ -111,6 +119,12 @@ export default function LoginPage() {
               <h1 className="text-2xl font-bold text-gray-900">Connexion</h1>
               <p className="text-gray-500 mt-1 text-sm">Clients &amp; vendeurs</p>
             </div>
+
+            {notice && (
+              <div role="status" className="mb-5 bg-green-50 border border-green-200 rounded-xl p-4 text-sm font-medium text-green-800">
+                {notice}
+              </div>
+            )}
 
             {/* Erreur admin uniquement */}
             {isAdminOnly && (

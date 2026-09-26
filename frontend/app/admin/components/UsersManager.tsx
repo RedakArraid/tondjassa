@@ -18,6 +18,7 @@ interface UserAccount {
 
 interface UsersManagerProps {
   token: string;
+  currentRole: string;
 }
 
 const ROLE_BADGE: Record<string, string> = {
@@ -28,7 +29,7 @@ const ROLE_BADGE: Record<string, string> = {
   user: 'bg-blue-100 text-blue-800 border-blue-200',
 };
 
-export default function UsersManager({ token }: UsersManagerProps) {
+export default function UsersManager({ token, currentRole }: UsersManagerProps) {
   const [users, setUsers] = useState<UserAccount[]>([]);
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(1);
@@ -42,7 +43,7 @@ export default function UsersManager({ token }: UsersManagerProps) {
   const [formName, setFormName] = useState('');
   const [formEmail, setFormEmail] = useState('');
   const [formPassword, setFormPassword] = useState('');
-  const [formRole, setFormRole] = useState<'user' | 'seller' | 'manager' | 'admin'>('user');
+  const [formRole, setFormRole] = useState<'manager' | 'admin'>('manager');
   const [submitting, setSubmitting] = useState(false);
 
   // État d'audit modal
@@ -96,7 +97,7 @@ export default function UsersManager({ token }: UsersManagerProps) {
       setFormName('');
       setFormEmail('');
       setFormPassword('');
-      setFormRole('user');
+      setFormRole('manager');
       setShowCreateForm(false);
       setPage(1);
       await fetchUsers();
@@ -160,27 +161,29 @@ export default function UsersManager({ token }: UsersManagerProps) {
           </p>
         </div>
 
-        <button
-          type="button"
-          onClick={() => {
-            setShowCreateForm((v) => !v);
-            setSuccessMessage('');
-            setErrorMessage('');
-          }}
-          className="inline-flex items-center gap-2 px-4 py-2 bg-orange-600 text-white rounded-xl text-sm font-semibold hover:bg-orange-700 shadow-sm transition"
-        >
-          {showCreateForm ? (
-            <>
-              <XMarkIcon className="w-4 h-4" />
-              Fermer le formulaire
-            </>
-          ) : (
-            <>
-              <PlusIcon className="w-4 h-4" />
-              + Créer un utilisateur
-            </>
-          )}
-        </button>
+        {currentRole === 'admin' && (
+          <button
+            type="button"
+            onClick={() => {
+              setShowCreateForm((v) => !v);
+              setSuccessMessage('');
+              setErrorMessage('');
+            }}
+            className="inline-flex items-center gap-2 px-4 py-2 bg-orange-600 text-white rounded-xl text-sm font-semibold hover:bg-orange-700 shadow-sm transition"
+          >
+            {showCreateForm ? (
+              <>
+                <XMarkIcon className="w-4 h-4" />
+                Fermer le formulaire
+              </>
+            ) : (
+              <>
+                <PlusIcon className="w-4 h-4" />
+                + Créer un utilisateur
+              </>
+            )}
+          </button>
+        )}
       </div>
 
       {/* Messages de retour */}
@@ -198,7 +201,7 @@ export default function UsersManager({ token }: UsersManagerProps) {
       )}
 
       {/* Formulaire de création */}
-      {showCreateForm && (
+      {showCreateForm && currentRole === 'admin' && (
         <div className="bg-white rounded-2xl border border-gray-200 p-6 shadow-sm">
           <h3 className="text-base font-bold text-gray-900 mb-4">Création d'un nouveau compte</h3>
           <form onSubmit={handleCreateAccount} className="space-y-4">
@@ -230,10 +233,10 @@ export default function UsersManager({ token }: UsersManagerProps) {
                 <input
                   type="password"
                   required
-                  minLength={8}
+                  minLength={12}
                   value={formPassword}
                   onChange={(e) => setFormPassword(e.target.value)}
-                  placeholder="Min. 8 caractères"
+                  placeholder="Min. 12 caractères"
                   className="w-full px-3.5 py-2 border border-gray-300 rounded-xl text-sm outline-none focus:ring-2 focus:ring-orange-500"
                 />
               </div>
@@ -244,8 +247,6 @@ export default function UsersManager({ token }: UsersManagerProps) {
                   onChange={(e) => setFormRole(e.target.value as any)}
                   className="w-full px-3.5 py-2 border border-gray-300 rounded-xl text-sm outline-none focus:ring-2 focus:ring-orange-500 bg-white"
                 >
-                  <option value="user">Utilisateur standard</option>
-                  <option value="seller">Vendeur</option>
                   <option value="manager">Manager Opérationnel</option>
                   <option value="admin">Super Administrateur</option>
                 </select>
@@ -349,14 +350,15 @@ export default function UsersManager({ token }: UsersManagerProps) {
                     <td className="px-4 py-3.5">
                       <select
                         value={u.role}
+                        disabled={currentRole !== 'admin'}
                         onChange={(e) => handleRoleChange(u.id, u.role, e.target.value)}
-                        className={`text-xs font-semibold px-2.5 py-1 rounded-full border outline-none cursor-pointer ${
+                        className={`text-xs font-semibold px-2.5 py-1 rounded-full border outline-none cursor-pointer disabled:cursor-not-allowed disabled:opacity-70 ${
                           ROLE_BADGE[u.role] || 'bg-gray-100 text-gray-800'
                         }`}
                       >
                         <option value="user">user</option>
-                        <option value="customer">customer</option>
-                        <option value="seller">seller</option>
+                        {u.customer && <option value="customer">customer</option>}
+                        {u.seller && <option value="seller">seller</option>}
                         <option value="manager">manager</option>
                         <option value="admin">admin</option>
                       </select>
@@ -389,7 +391,7 @@ export default function UsersManager({ token }: UsersManagerProps) {
                         >
                           Audit
                         </button>
-                        {u.activeSessions > 0 && (
+                        {currentRole === 'admin' && u.activeSessions > 0 && (
                           <button
                             type="button"
                             onClick={() => handleRevokeSessions(u.id, u.email)}

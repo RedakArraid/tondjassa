@@ -88,31 +88,75 @@ class RefundService {
   static async finalize(refundId, reference, userId = null) {
     const initial = await db.refund.findUnique({ where: { id: refundId } });
     if (!initial) throw httpError('Remboursement introuvable', 404);
-    return transaction(async (tx) => {
+    if (initial.status === 'COMPLETED') return initial;
+
+    const outcome = await transaction(async (tx) => {
       await lockOrder(tx, initial.orderId);
-      const refund = await tx.refund.findUnique({ where: { id: refundId }, include: { order: { include: { payment: true, items: true } } } });
-      if (refund.status === 'COMPLETED') return refund;
+      const refund = await tx.refund.findUnique({
+        where: { id: refundId },
+        include: { order: { include: { payment: true, items: true } } },
+      });
+      if (refund.status === 'COMPLETED') return { refund, newlyCompleted: false };
       if (!reference || refund.order.payment?.status !== 'COMPLETED') throw httpError('Paiement non remboursable');
+
       const order = refund.order;
-      if (order.status === 'DELIVERED') await OrderService.transitionOrderStatus(order.id, 'REFUNDED', {
-        userId, reason: refund.reason, refundConfirmed: true, restock: refund.restockRequested }, tx);
-      else if (order.status === 'CANCELLED') await Ledger.recordOrderRefund(order.id, { reason: refund.reason }, tx);
-      else throw httpError('Statut de commande incoherent');
+      if (order.status === 'DELIVERED') {
+        await OrderService.transitionOrderStatus(order.id, 'REFUNDED', {
+          userId, reason: refund.reason, refundConfirmed: true, restock: refund.restockRequested,
+        }, tx);
+      } else if (order.status === 'CANCELLED') {
+        await Ledger.recordOrderRefund(order.id, { reason: refund.reason }, tx);
+      } else {
+        throw httpError('Statut de commande incoherent');
+      }
+
       const settlement = await tx.paymentEvent.findUnique({ where: { idempotencyKey: `settlement:${order.id}` } });
       if (settlement?.payload?.credited) {
         await tx.customer.update({ where: { id: order.customerId }, data: { totalSpent: { decrement: order.totalAmount } } });
         for (const item of [...order.items].sort((a, b) => String(a.sellerId).localeCompare(String(b.sellerId)))) {
-          if (item.sellerId) await tx.seller.update({ where: { id: item.sellerId }, data: {
-            totalSales: { decrement: item.totalPrice }, totalEarnings: { decrement: item.sellerEarnings } } });
+          if (item.sellerId) {
+            await tx.seller.update({
+              where: { id: item.sellerId },
+              data: { totalSales: { decrement: item.totalPrice }, totalEarnings: { decrement: item.sellerEarnings } },
+            });
+          }
         }
       }
+
       await tx.payment.update({ where: { id: order.payment.id }, data: { status: 'REFUNDED' } });
       await tx.returnRequest.updateMany({ where: { orderId: order.id, status: 'approved' }, data: { status: 'completed' } });
-      const updated = await tx.refund.update({ where: { id: refundId }, data: { status: 'COMPLETED', providerReference: reference, completedAt: new Date(), error: null } });
-      await tx.auditLog.create({ data: { userId, action: 'REFUND_COMPLETED', entity: 'Refund', entityId: refundId,
-        details: { reference, gateway: refund.gateway, amount: refund.amount, manualAttestation: !!userId } } });
-      return updated;
+      const updated = await tx.refund.update({
+        where: { id: refundId },
+        data: { status: 'COMPLETED', providerReference: reference, completedAt: new Date(), error: null },
+      });
+      await tx.auditLog.create({
+        data: {
+          userId,
+          action: 'REFUND_COMPLETED',
+          entity: 'Refund',
+          entityId: refundId,
+          details: { reference, gateway: refund.gateway, amount: refund.amount, manualAttestation: !!userId },
+        },
+      });
+      return { refund: updated, newlyCompleted: true };
     });
+
+    if (outcome.newlyCompleted) {
+      try {
+        const ret = await db.returnRequest.findFirst({
+          where: { orderId: initial.orderId, status: 'completed' },
+          include: { customer: true },
+        });
+        if (ret) {
+          const sent = await require('./email.service').sendReturnStatusEmail(ret.customer, ret, 'completed');
+          if (!sent.success) console.warn('[Refund] Remboursement confirmé, email client non livré:', sent.error);
+        }
+      } catch (error) {
+        console.warn('[Refund] Remboursement confirmé, notification client indisponible:', error.message);
+      }
+    }
+    return outcome.refund;
   }
+
 }
 module.exports = RefundService;
