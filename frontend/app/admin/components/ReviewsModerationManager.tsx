@@ -19,6 +19,8 @@ interface Review {
   rating: number;
   title?: string;
   comment: string;
+  sellerReply?: string | null;
+  sellerReplyAt?: string | null;
   status: 'pending' | 'approved' | 'rejected';
   isVerified: boolean;
   customerName: string;
@@ -251,6 +253,11 @@ export default function ReviewsModerationManager() {
                   <p className="font-semibold text-gray-900 text-sm mb-1">{review.title}</p>
                 )}
                 <p className="text-xs text-gray-700 leading-relaxed">{review.comment}</p>
+                {review.sellerReply && (
+                  <div className="mt-2 rounded-lg bg-orange-50 border border-orange-100 p-2 text-xs text-gray-700">
+                    <span className="font-semibold text-orange-700">Réponse boutique :</span> {review.sellerReply}
+                  </div>
+                )}
                 <p className="text-[11px] text-gray-400 mt-2">
                   Par <span className="font-medium text-gray-600">{review.customerName}</span>{' '}
                   {review.customerEmail ? `(${review.customerEmail})` : ''} le{' '}

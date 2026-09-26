@@ -300,6 +300,76 @@ class BrowserAcceptance(unittest.TestCase):
         self.page.goto(BASE + "/admin/dashboard")
         expect(self.page.get_by_text("MandeMarket", exact=True).first).to_be_visible()
 
+    def test_10_verified_review_requires_authenticated_customer(self):
+        catalog = self.api("/api/products?search=Article%20recette%20QA")
+        self.assertEqual(catalog.status, 200)
+        product_id = catalog.json()["products"][0]["id"]
+
+        spoof = self.api(
+            "/api/reviews",
+            method="POST",
+            data={
+                "productId": product_id,
+                "customerName": "Usurpateur",
+                "customerEmail": "qa-buyer@test.invalid",
+                "rating": 1,
+                "title": "Tentative",
+                "comment": "Cet avis ne doit jamais obtenir le badge achat vérifié.",
+            },
+        )
+        self.assertEqual(spoof.status, 201)
+        self.assertFalse(spoof.json()["review"]["isVerified"])
+        self.assertEqual(spoof.json()["review"]["status"], "pending")
+
+        buyer_token = self.login("qa-buyer@test.invalid", PASSWORD)
+        verified = self.api(
+            "/api/reviews",
+            buyer_token,
+            method="POST",
+            data={
+                "productId": product_id,
+                "customerName": "Nom falsifié",
+                "customerEmail": "attacker@test.invalid",
+                "rating": 5,
+                "title": "Achat réel",
+                "comment": "Avis authentifié issu du compte réellement livré.",
+            },
+        )
+        self.assertEqual(verified.status, 201)
+        review = verified.json()["review"]
+        self.assertTrue(review["isVerified"])
+        self.assertEqual(review["status"], "approved")
+        self.assertEqual(review["customerName"], "QA Buyer")
+        self.assertEqual(review["customerEmail"], "qa-buyer@test.invalid")
+
+        duplicate = self.api(
+            "/api/reviews",
+            buyer_token,
+            method="POST",
+            data={"productId": product_id, "customerName": "QA", "rating": 4, "comment": "Doublon"},
+        )
+        self.assertEqual(duplicate.status, 409)
+
+        self.page.evaluate("localStorage.clear()")
+        seller_token = self.login("qa-seller@test.invalid", PASSWORD, staff=True)
+        reply = self.api(
+            f"/api/sellers/me/reviews/{review['id']}/reply",
+            seller_token,
+            method="POST",
+            data={"reply": "Merci pour votre retour vérifié."},
+        )
+        self.assertEqual(reply.status, 200)
+        self.assertEqual(reply.json()["review"]["sellerReply"], "Merci pour votre retour vérifié.")
+
+        public_reviews = self.api(f"/api/reviews/{product_id}")
+        self.assertEqual(public_reviews.status, 200)
+        visible = public_reviews.json()["reviews"]
+        self.assertEqual(len([item for item in visible if item["id"] == review["id"]]), 1)
+        published = next(item for item in visible if item["id"] == review["id"])
+        self.assertTrue(published["isVerified"])
+        self.assertEqual(published["sellerReply"], "Merci pour votre retour vérifié.")
+        self.assertFalse(any(item["id"] == spoof.json()["review"]["id"] for item in visible))
+
 
 if __name__ == "__main__":
     suite = unittest.defaultTestLoader.loadTestsFromTestCase(BrowserAcceptance)

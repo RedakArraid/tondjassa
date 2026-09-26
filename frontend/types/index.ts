@@ -221,6 +221,8 @@ export interface Review {
   rating: number; // 1-5 étoiles
   title?: string;
   comment: string;
+  sellerReply?: string | null;
+  sellerReplyAt?: Date | string | null;
   isVerified: boolean;
   helpful: number;
   status: 'approved' | 'pending' | 'rejected';

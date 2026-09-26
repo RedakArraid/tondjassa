@@ -751,32 +751,28 @@ router.get('/me/reviews', requireAuth, requireSeller, async (req, res) => {
 // POST /api/sellers/me/reviews/:id/reply - Réponse vendeur à un avis
 router.post('/me/reviews/:id/reply', requireAuth, requireSeller, async (req, res) => {
   try {
-    const { reply } = req.body;
-    if (!reply || !reply.trim()) {
-      return res.status(400).json({ error: 'Réponse requise' });
-    }
-
-    const review = await db.review.findUnique({
-      where: { id: req.params.id },
-      include: { product: true },
+    const { reply } = z.object({ reply: z.string().trim().min(1).max(2000) }).parse(req.body);
+    const updated = await ReviewService.replyToReview(db, {
+      sellerId: req.seller.id,
+      reviewId: req.params.id,
+      reply,
     });
-
-    if (!review || review.product.sellerId !== req.seller.id) {
-      return res.status(404).json({ error: 'Avis introuvable' });
-    }
-
-    // Sauvegarder la réponse en ajoutant la signature du vendeur dans le commentaire ou log
-    const updated = await db.review.update({
-      where: { id: req.params.id },
+    await db.auditLog.create({
       data: {
-        comment: `${review.comment}\n\n[Réponse de ${req.seller.storeName}]: ${reply.trim()}`,
+        userId: req.user.userId,
+        action: 'SELLER_REVIEW_REPLIED',
+        entity: 'Review',
+        entityId: updated.id,
+        details: { sellerId: req.seller.id },
+        ipAddress: req.ip,
       },
     });
-
     res.json({ success: true, review: updated });
   } catch (error) {
-    console.error('Erreur réponse avis:', error);
-    res.status(500).json({ error: 'Erreur serveur' });
+    if (error?.name === 'ZodError') return res.status(400).json({ error: 'Réponse invalide', details: error.errors });
+    const status = error?.statusCode || 500;
+    if (status >= 500) console.error('Erreur réponse avis:', error);
+    res.status(status).json({ error: status >= 500 ? 'Erreur serveur' : error.message });
   }
 });
 

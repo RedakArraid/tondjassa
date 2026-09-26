@@ -80,3 +80,14 @@ La messagerie vendeur transmet réellement l'email via le SMTP configuré et ref
 une adresse qui n'appartient pas à un acheteur de la boutique. Les invitations de
 collaborateurs sont explicitement indisponibles tant qu'un vrai modèle de membres
 et permissions n'existe pas : aucun faux email d'invitation n'est annoncé.
+
+
+## Avis vérifiés
+
+Un avis public non authentifié peut être soumis à modération, mais l'email déclaré
+ne suffit jamais à obtenir le badge « Achat vérifié ». Pour ce badge, l'API utilise
+le `customerId` de la session client, remplace le nom/email du formulaire par
+l'identité du compte, puis vérifie une commande de ce même client en état SHIPPED
+ou DELIVERED. Une contrainte unique empêche un même compte client de publier deux
+avis sur le même produit. La réponse vendeur est stockée séparément du commentaire
+original afin de préserver l'intégrité du contenu client.

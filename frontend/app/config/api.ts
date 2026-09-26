@@ -675,13 +675,20 @@ export class ReviewService {
     title?: string;
     comment: string;
   }) {
-    try {
-      const response = await apiService.post('/api/reviews', reviewData);
-      return response.review || response;
-    } catch (error) {
-      console.error('Erreur lors de la création de l\'avis:', error);
-      throw error;
-    }
+    const customerToken = typeof window !== 'undefined'
+      ? localStorage.getItem('mandemarket_customer_token')
+      : null;
+    const response = await fetch(`${API_BASE_URL}/api/reviews`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(customerToken ? { Authorization: `Bearer ${customerToken}` } : {}),
+      },
+      body: JSON.stringify(reviewData),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || 'Erreur lors de la création de l\'avis');
+    return data.review || data;
   }
 
   static async markHelpful(reviewId: string) {

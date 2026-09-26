@@ -141,6 +141,7 @@ model Customer {
   orders               Order[]
   returnRequests       ReturnRequest[]
   promotionRedemptions PromotionRedemption[]
+  reviews              Review[]
   totalSpent           Int                    @default(0) // centimes
   loyaltyPoints        Int                    @default(0)
   status               String                 @default("active")
@@ -445,11 +446,15 @@ model Review {
   id            String       @id @default(uuid())
   productId     Int
   product       Product      @relation(fields: [productId], references: [id], onDelete: Cascade)
+  customerId    String?
+  customer      Customer?    @relation(fields: [customerId], references: [id], onDelete: SetNull)
   customerName  String
   customerEmail String?
   rating        Int          // 1-5 étoiles
   title         String?
   comment       String
+  sellerReply   String?
+  sellerReplyAt DateTime?
   isVerified    Boolean      @default(false)
   helpful       Int          @default(0)
   status        ReviewStatus @default(approved)
@@ -458,6 +463,8 @@ model Review {
 
   @@index([productId])
   @@index([status])
+  @@index([customerId])
+  @@unique([customerId, productId])
 }
 
 // ===== NOTIFICATIONS =====

@@ -212,6 +212,10 @@ export default function ProductReviews({ productId }: ProductReviewsProps) {
                 />
               </div>
             </div>
+            <p className="text-xs text-gray-500">
+              Si vous êtes connecté, l’identité de votre compte est utilisée côté serveur.
+              Le badge « Achat vérifié » exige une commande expédiée ou livrée appartenant à ce compte.
+            </p>
 
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -332,6 +336,13 @@ export default function ProductReviews({ productId }: ProductReviewsProps) {
               </div>
 
               <p className="text-gray-700 mb-4 leading-relaxed">{review.comment}</p>
+
+              {review.sellerReply && (
+                <div className="mb-4 rounded-lg border border-orange-100 bg-orange-50 p-4">
+                  <p className="text-xs font-bold uppercase tracking-wide text-orange-700">Réponse de la boutique</p>
+                  <p className="mt-1 text-sm text-gray-700 whitespace-pre-line">{review.sellerReply}</p>
+                </div>
+              )}
 
               <div className="flex items-center gap-4">
                 <button
