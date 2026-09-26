@@ -1,5 +1,4 @@
 const paystackService = require('../services/paystack.service');
-const cinetpayService = require('../services/cinetpay.service');
 const crypto = require('crypto');
 
 describe('Payment Engine Tests (Phase 4 - MM-BE-040 / MM-BE-041 / MM-BE-042)', () => {
@@ -42,23 +41,6 @@ describe('Payment Engine Tests (Phase 4 - MM-BE-040 / MM-BE-041 / MM-BE-042)', (
       expect(OPERATOR_SLUG['mtn_momo']).toBe('mtn');
       expect(OPERATOR_SLUG['wave']).toBe('wave');
       expect(OPERATOR_SLUG['orange_money']).toBe('orange');
-    });
-  });
-
-  describe('CinetPay Security & Token Verification (MM-BE-041)', () => {
-    test('verifyNotificationToken checks HMAC-SHA256 hash', () => {
-      process.env.CINETPAY_SECRET_KEY = 'cinetpay_secret_key_test';
-      const rawBody = JSON.stringify({ cpm_trans_id: 'MM-ORDER-1234', cpm_result: '00' });
-      const validToken = crypto
-        .createHmac('sha256', process.env.CINETPAY_SECRET_KEY)
-        .update(rawBody)
-        .digest('hex');
-
-      const isValid = cinetpayService.verifyNotificationToken(validToken, rawBody);
-      expect(isValid).toBe(true);
-
-      const isInvalid = cinetpayService.verifyNotificationToken('fake-token', rawBody);
-      expect(isInvalid).toBe(false);
     });
   });
 });

@@ -5,8 +5,10 @@ import Link from 'next/link';
 import { SellerService } from '../../../../config/api';
 import { Spinner } from '../../_components/sections';
 import { SellerPageHeader, SellerCard, SellerEmptyState } from '../../_components/ui';
+import { useSellerAccess } from '../../_components/access';
 
 export default function CampagnesPage() {
+  const { can } = useSellerAccess();
   const [promos, setPromos] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -24,18 +26,18 @@ export default function CampagnesPage() {
         description="Pilotez la visibilité et l'attractivité de vos offres commerciales sur MandeMarket."
         action={
           <div className="flex items-center gap-2">
-            <Link
+            {can('catalog.write') && <Link
               href="/vendeur/dashboard/marketing/coupons"
               className="px-4 py-2 text-xs font-bold rounded-lg bg-brand-orange text-white hover:bg-brand-orange/90 shadow-sm transition"
             >
               + Nouveau code promo
-            </Link>
-            <Link
+            </Link>}
+            {can('orders.write') && <Link
               href="/vendeur/dashboard/communication/support"
               className="px-4 py-2 text-xs font-semibold rounded-lg bg-white border border-gray-200 text-gray-700 hover:bg-gray-50 shadow-sm transition"
             >
               Demander une mise en avant
-            </Link>
+            </Link>}
           </div>
         }
       />
@@ -47,12 +49,12 @@ export default function CampagnesPage() {
           <p className="text-xs text-gray-500">
             Créez des remises en pourcentage, montants fixes ou livraisons gratuites utilisables lors du checkout.
           </p>
-          <Link
+          {can('catalog.write') && <Link
             href="/vendeur/dashboard/marketing/coupons"
             className="inline-block text-xs font-semibold text-brand-orange hover:underline pt-2"
           >
             Gérer mes codes promo →
-          </Link>
+          </Link>}
         </div>
 
         <div className="bg-white p-5 rounded-xl border border-gray-100 shadow-sm space-y-2">
@@ -75,12 +77,12 @@ export default function CampagnesPage() {
           <p className="text-xs text-gray-500">
             Demandez un encart publicitaire sur la page d'accueil ou en tête de catégorie auprès de l'équipe MandeMarket.
           </p>
-          <Link
+          {can('orders.write') && <Link
             href="/vendeur/dashboard/communication/support"
             className="inline-block text-xs font-semibold text-brand-orange hover:underline pt-2"
           >
             Contacter le support →
-          </Link>
+          </Link>}
         </div>
       </div>
 
@@ -107,12 +109,12 @@ export default function CampagnesPage() {
                   </div>
                   <p className="text-xs text-gray-500 mt-1">{p.name} · Valeur : {p.value} {p.type === 'FIXED_AMOUNT' ? 'FCFA' : '%'}</p>
                 </div>
-                <Link
+                {can('catalog.write') && <Link
                   href="/vendeur/dashboard/marketing/coupons"
                   className="px-3 py-1 text-xs font-semibold rounded-lg bg-gray-100 hover:bg-gray-200 text-gray-700"
                 >
                   Gérer
-                </Link>
+                </Link>}
               </div>
             ))}
           </div>

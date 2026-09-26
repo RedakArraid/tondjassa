@@ -5,8 +5,10 @@ import Link from 'next/link';
 import { SellerService } from '../../../../config/api';
 import { Spinner } from '../../_components/sections';
 import { SellerPageHeader, SellerCard, SellerStatGrid } from '../../_components/ui';
+import { useSellerAccess } from '../../_components/access';
 
 export default function StatistiquesMarketingPage() {
+  const { can } = useSellerAccess();
   const [loading, setLoading] = useState(true);
   const [promos, setPromos] = useState<any[]>([]);
 
@@ -27,13 +29,20 @@ export default function StatistiquesMarketingPage() {
 
   const activeCount = promos.filter((p) => p.isActive).length;
   const totalUses = promos.reduce((sum, p) => sum + (p.usedCount || 0), 0);
+  const promotionTypes = promos.reduce<Record<string, number>>((counts, promotion) => {
+    const type = String(promotion.type || 'NON_RENSEIGNE');
+    counts[type] = (counts[type] || 0) + 1;
+    return counts;
+  }, {});
+  const dominantType = Object.entries(promotionTypes).sort((a, b) => b[1] - a[1])[0]?.[0];
+  const typeLabels: Record<string, string> = { PERCENTAGE: 'Pourcentage', FIXED_AMOUNT: 'Montant fixe', FREE_SHIPPING: 'Livraison gratuite' };
 
   return (
     <div className="space-y-6">
       <SellerPageHeader
         title="Performance Marketing"
         description="Mesurez l'efficacité de vos codes promotionnels et opérations spéciales."
-        action={
+        action={can('catalog.write') ? (
           <div className="flex items-center gap-2">
             <Link
               href="/vendeur/dashboard/marketing/coupons"
@@ -42,7 +51,7 @@ export default function StatistiquesMarketingPage() {
               + Nouveau code promo
             </Link>
           </div>
-        }
+        ) : undefined}
       />
 
       <SellerStatGrid
@@ -50,7 +59,7 @@ export default function StatistiquesMarketingPage() {
           { label: 'Codes promo actifs', value: String(activeCount), hint: 'En circulation' },
           { label: 'Utilisations totales', value: String(totalUses), hint: 'Rédemptions en caisse' },
           { label: 'Campagnes créées', value: String(promos.length), hint: 'Historique boutique' },
-          { label: 'Type dominant', value: 'Pourcentage (%)', hint: 'Mécanisme le plus utilisé' },
+          { label: 'Type dominant', value: dominantType ? (typeLabels[dominantType] || dominantType) : '—', hint: promos.length ? 'Mécanisme le plus créé' : 'Aucune donnée' },
         ]}
       />
 

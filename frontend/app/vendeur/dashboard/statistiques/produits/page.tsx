@@ -5,12 +5,15 @@ import Link from 'next/link';
 import { SellerService } from '../../../../config/api';
 import { Spinner } from '../../_components/sections';
 import { SellerPageHeader, SellerCard, SellerStatGrid } from '../../_components/ui';
+import { useSellerAccess } from '../../_components/access';
 
 function fmt(cents: number) {
   return `${Math.round((cents || 0) / 100).toLocaleString('fr-FR')} FCFA`;
 }
 
 export default function StatistiquesProduitsPage() {
+  const { can } = useSellerAccess();
+  const canWrite = can('catalog.write');
   const [loading, setLoading] = useState(true);
   const [products, setProducts] = useState<any[]>([]);
 
@@ -40,15 +43,15 @@ export default function StatistiquesProduitsPage() {
     <div className="space-y-6">
       <SellerPageHeader
         title="Statistiques des produits"
-        description="Suivez l'état des stocks, la répartition du catalogue et la popularité de vos références."
+        description="Suivez l'état des stocks et la répartition réelle de votre catalogue."
         action={
           <div className="flex items-center gap-2">
-            <Link
+            {canWrite && <Link
               href="/vendeur/dashboard/produits/stock"
               className="px-4 py-2 text-xs font-semibold rounded-lg bg-white border border-gray-200 text-gray-700 hover:bg-gray-50 shadow-sm transition"
             >
               Ajuster les stocks
-            </Link>
+            </Link>}
             <Link
               href="/vendeur/dashboard/produits/ajouter"
               className="px-4 py-2 text-xs font-bold rounded-lg bg-brand-orange text-white hover:bg-brand-orange/90 shadow-sm transition"
@@ -69,7 +72,7 @@ export default function StatistiquesProduitsPage() {
         ]}
       />
 
-      <SellerCard title="Top produits du catalogue">
+      <SellerCard title="Aperçu du catalogue">
         <div className="divide-y divide-gray-100">
           {products.slice(0, 10).map((p) => (
             <div key={p.id} className="py-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
@@ -91,18 +94,18 @@ export default function StatistiquesProduitsPage() {
               </div>
 
               <div className="flex items-center gap-2">
-                <Link
+                {canWrite && <Link
                   href={`/vendeur/dashboard/produits/ajouter?id=${p.id}`}
                   className="px-3 py-1 text-xs font-semibold rounded-lg bg-gray-100 hover:bg-gray-200 text-gray-700 transition"
                 >
                   Modifier
-                </Link>
-                <Link
+                </Link>}
+                {canWrite && <Link
                   href="/vendeur/dashboard/produits/stock"
                   className="px-3 py-1 text-xs font-semibold rounded-lg border border-gray-200 hover:bg-gray-50 text-gray-700 transition"
                 >
                   Stock
-                </Link>
+                </Link>}
               </div>
             </div>
           ))}

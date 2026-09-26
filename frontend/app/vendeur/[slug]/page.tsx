@@ -13,7 +13,6 @@ import {
   MapPinIcon,
   StarIcon as StarOutline,
   ShareIcon,
-  HeartIcon,
   MagnifyingGlassIcon,
   ShoppingBagIcon,
   TruckIcon,
@@ -22,7 +21,7 @@ import {
   Squares2X2Icon,
   CheckBadgeIcon,
 } from '@heroicons/react/24/outline';
-import { StarIcon as StarSolid, HeartIcon as HeartSolid } from '@heroicons/react/24/solid';
+import { StarIcon as StarSolid } from '@heroicons/react/24/solid';
 
 const DEFAULT_BANNER =
   'https://images.unsplash.com/photo-1441986300917-64674bd600d8?w=1920&h=600&fit=crop';
@@ -60,7 +59,6 @@ export default function VendeurProfilPage() {
   const [query, setQuery] = useState('');
   const [categoryId, setCategoryId] = useState<string>('all');
   const [sortBy, setSortBy] = useState('newest');
-  const [following, setFollowing] = useState(false);
   const { formatPrice } = useRegion();
   const { addItem } = useCart();
 
@@ -234,18 +232,6 @@ export default function VendeurProfilPage() {
             >
               <ShareIcon className="w-4 h-4" />
               Partager
-            </button>
-            <button
-              type="button"
-              onClick={() => setFollowing((v) => !v)}
-              className={`inline-flex items-center gap-2 px-4 py-2.5 rounded-xl font-semibold text-sm transition ${
-                following
-                  ? 'bg-brand-soft text-brand-orange border border-brand-orange/30'
-                  : 'bg-brand-orange text-white hover:bg-brand-orange-dark'
-              }`}
-            >
-              {following ? <HeartSolid className="w-4 h-4" /> : <HeartIcon className="w-4 h-4" />}
-              {following ? 'Suivi' : 'Suivre'}
             </button>
           </div>
         </div>

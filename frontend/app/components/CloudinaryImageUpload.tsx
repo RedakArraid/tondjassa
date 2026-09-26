@@ -169,6 +169,7 @@ export default function CloudinaryImageUpload({
               className="absolute top-2 right-2 bg-red-500 text-white w-8 h-8 rounded-full flex items-center justify-center hover:bg-red-600 transition-colors shadow-lg"
               type="button"
               title="Supprimer l'image"
+              aria-label="Supprimer l’image"
             >
               <XMarkIcon className="w-5 h-5" />
             </button>
@@ -291,4 +292,3 @@ export default function CloudinaryImageUpload({
     </div>
   );
 }
-

@@ -4,8 +4,10 @@ import React, { useEffect, useState } from 'react';
 import { SellerService } from '../../../../config/api';
 import { Spinner } from '../../_components/sections';
 import { SellerPageHeader, SellerCard } from '../../_components/ui';
+import { useSellerAccess } from '../../_components/access';
 
 export default function BoosterPage() {
+  const { can } = useSellerAccess();
   const [products, setProducts] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedProductId, setSelectedProductId] = useState<string>('');
@@ -61,6 +63,15 @@ export default function BoosterPage() {
       setSubmitting(false);
     }
   };
+
+  if (!can('orders.write')) {
+    return (
+      <div className="space-y-5">
+        <SellerPageHeader title="Booster ma visibilité" description="Les demandes de mise en avant sont réservées aux collaborateurs autorisés à communiquer avec le support." />
+        <SellerCard><p role="alert" className="py-10 text-center text-sm text-gray-500">Votre rôle ne permet pas d’envoyer une demande de mise en avant.</p></SellerCard>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-5">

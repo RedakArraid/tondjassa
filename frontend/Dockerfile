@@ -46,12 +46,13 @@ WORKDIR /app
 
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
-ENV PORT=${PORT:-3000}
+ENV PORT=3000
 ENV HOSTNAME=0.0.0.0
 
 # 👤 Créer un utilisateur non-root pour la sécurité
 RUN addgroup --system --gid 1001 nodejs
 RUN adduser --system --uid 1001 nextjs
+RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx
 
 # 📁 Copier les fichiers publics
 COPY --from=builder /app/public ./public

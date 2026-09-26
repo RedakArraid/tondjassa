@@ -11,6 +11,24 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 jobs:
+  security:
+    name: Repository secret scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Scan the complete Git history with pinned Gitleaks
+        run: |
+          docker run --rm \
+            -e GIT_CONFIG_COUNT=1 \
+            -e GIT_CONFIG_KEY_0=safe.directory \
+            -e GIT_CONFIG_VALUE_0=/repo \
+            -v "$PWD:/repo:ro" \
+            zricethezav/gitleaks:v8.28.0 \
+            git --redact --verbose --gitleaks-ignore-path /repo/.gitleaksignore /repo
   quality:
     name: Lint, types, unit tests, build and runtime audit
     runs-on: ubuntu-latest
@@ -75,6 +93,17 @@ jobs:
         with: { persist-credentials: false }
       - run: docker build --pull -t tondjassa-backend:ci backend
       - run: docker build --pull -t tondjassa-frontend:ci frontend
+      - name: Block critical and high exploitable image vulnerabilities
+        run: |
+          mkdir -p "$RUNNER_TEMP/trivy-cache"
+          for image in tondjassa-backend:ci tondjassa-frontend:ci; do
+            docker run --rm \
+              -v /var/run/docker.sock:/var/run/docker.sock \
+              -v "$RUNNER_TEMP/trivy-cache:/root/.cache/trivy" \
+              aquasec/trivy:0.67.2 \
+              image --scanners vuln --exit-code 1 --ignore-unfixed \
+              --severity CRITICAL,HIGH --no-progress "$image"
+          done
       - name: Start production images with isolated services
         run: |
           printf 'CI_JWT_SECRET=%s\nCI_METRICS_TOKEN=%s\n' "$(openssl rand -hex 32)" "$(openssl rand -hex 32)" > "$RUNNER_TEMP/smoke.env"
@@ -115,7 +144,7 @@ jobs:
           backup=$(find "$BACKUP_DIR" -name '*.dump' -type f -print -quit)
           bash backend/scripts/restore-db.sh "$backup"
           test "$("${compose[@]}" exec -T postgres psql -U postgres -d "$RESTORE_DATABASE" -Atc "SELECT count(*) FROM smoke_backup WHERE marker='restore-proof'")" = 1
-          "${compose[@]}" exec -T backend npm run production:preflight
+          "${compose[@]}" exec -T backend node scripts/production-preflight.js
       - name: Bounded load smoke against production images
         env:
           LOAD_API_URL: http://127.0.0.1:4002
@@ -146,7 +175,7 @@ jobs:
 
   evidence:
     name: Release candidate evidence
-    needs: [quality, integration, containers]
+    needs: [security, quality, integration, containers]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -184,9 +213,10 @@ jobs:
             workflowRunAttempt: Number(process.env.RELEASE_RUN_ATTEMPT),
             generatedAt: new Date().toISOString(),
             gates: {
+              repositorySecretScan: 'success',
               quality: 'success',
               postgresqlIntegration: 'success',
-              productionContainersRestoreAndLoadSmoke: 'success'
+              productionContainersRestoreImageScanAndLoadSmoke: 'success'
             },
             versions: {
               root: root.version || null,

@@ -29,10 +29,21 @@ describe('PricingService — Calcul de Devis Déterministe (MM-QA-090)', () => {
       expect(standard.cost).toBe(0);
     });
 
-    it('retourne les tarifs par défaut pour un autre pays', () => {
-      const options = PricingService.getShippingOptions('SN', 10000);
-      const standard = options.find((o) => o.code === 'STANDARD');
-      expect(standard.cost).toBe(500000); // 5 000 FCFA
+    it('retourne les tarifs par défaut pour un autre pays explicitement activé', () => {
+      const previous = process.env.CHECKOUT_COUNTRIES;
+      process.env.CHECKOUT_COUNTRIES = 'CI,FR,BE';
+      try {
+        const options = PricingService.getShippingOptions('BE', 10000);
+        const standard = options.find((o) => o.code === 'STANDARD');
+        expect(standard.cost).toBe(500000); // 5 000 FCFA
+      } finally {
+        if (previous === undefined) delete process.env.CHECKOUT_COUNTRIES;
+        else process.env.CHECKOUT_COUNTRIES = previous;
+      }
+    });
+
+    it('refuse un pays qui n’est pas activé', () => {
+      expect(() => PricingService.getShippingOptions('SN', 10000)).toThrow('Livraison indisponible');
     });
   });
 

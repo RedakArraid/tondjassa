@@ -31,21 +31,21 @@ export default function StatistiquesVisiteursPage() {
   }
 
   const avgRating = reviews.length > 0
-    ? (reviews.reduce((acc, r) => acc + (r.rating || 5), 0) / reviews.length).toFixed(1)
-    : '5.0';
+    ? (reviews.reduce((acc, r) => acc + Number(r.rating || 0), 0) / reviews.length).toFixed(1)
+    : null;
 
   return (
     <div className="space-y-6">
       <SellerPageHeader
-        title="Audience & Visiteurs"
-        description="Surveillez l'intérêt généré par vos produits et l'interaction avec vos acheteurs."
+        title="Audience acheteurs"
+        description="Indicateurs calculés uniquement à partir des clients et avis réellement enregistrés. Les visites anonymes ne sont pas mesurées."
       />
 
       <SellerStatGrid
         items={[
           { label: 'Clients acheteurs', value: String(customers.length), hint: 'Clients ayant commandé' },
           { label: 'Avis reçus', value: String(reviews.length), hint: 'Retours d’expérience vérifiés' },
-          { label: 'Note moyenne', value: `${avgRating} / 5`, hint: 'Évaluation globale boutique' },
+          { label: 'Note moyenne', value: avgRating ? `${avgRating} / 5` : '—', hint: reviews.length ? 'Évaluation globale boutique' : 'Aucun avis reçu' },
           { label: 'Taux d’engagement', value: reviews.length > 0 ? `${Math.round((reviews.length / Math.max(1, customers.length)) * 100)} %` : '—', hint: 'Ratio avis / acheteurs' },
         ]}
       />

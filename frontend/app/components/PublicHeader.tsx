@@ -254,7 +254,11 @@ export default function PublicHeader() {
                   placeholder="Rechercher un produit..."
                   className="w-full rounded-full bg-brand-cream pl-4 pr-11 py-2.5 text-sm outline-none focus:ring-2 focus:ring-orange-200"
                 />
-                <button type="submit" className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500">
+                <button
+                  type="submit"
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500"
+                  aria-label="Rechercher"
+                >
                   <MagnifyingGlassIcon className="w-5 h-5" />
                 </button>
               </div>

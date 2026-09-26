@@ -548,19 +548,6 @@ Interface attendue :
 
 Chaque prestataire doit produire un résultat interne commun avec référence, montant, devise, statut et données brutes filtrées.
 
-## MM-BE-041 — Corriger CinetPay
-
-Agent : Backend
-
-Actions :
-
-- vérifier X-TOKEN HMAC ;
-- appeler payment/check pour obtenir le vrai statut ;
-- ne jamais utiliser cpm_result comme preuve ;
-- contrôler site, transaction, montant et devise ;
-- gérer les statuts d'attente ;
-- tester notifications répétées et désordonnées.
-
 ## MM-BE-042 — Corriger Paystack
 
 Agent : Backend
@@ -572,7 +559,7 @@ Actions :
 - choisir correctement entre Redirect et Charge API ;
 - vérifier signature, référence, montant et devise ;
 - vérifier la transaction côté Paystack avant règlement interne ;
-- gérer charge.success de façon idempotente.
+- gérer `charge.success`, les échecs, les remboursements et les litiges de façon idempotente.
 
 ## MM-BE-043 — Corriger Stripe
 

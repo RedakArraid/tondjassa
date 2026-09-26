@@ -32,6 +32,7 @@ const shippingRoutes = require('./routes.shipping');
 const checkoutRoutes = require('./routes.checkout');
 const adminRoutes = require('./routes.admin');
 const contactRoutes = require('./routes.contact');
+const supportRoutes = require('./routes.support');
 
 const allowedOrigins = isProd ? [] : [
   'http://localhost:3000',
@@ -143,20 +144,21 @@ app.options('*', cors(corsOptions));
 
 // Never allow browsers or intermediaries to cache authenticated/financial responses.
 app.use((req, res, next) => {
-  if (/^\/api\/(?:auth|account|admin|dashboard|payment|sellers\/me|internal)\b/.test(req.path)) {
+  if (/^\/api\/(?:auth|account|admin|support|dashboard|payment|sellers\/me|internal)\b/.test(req.path)) {
     res.setHeader('Cache-Control', 'no-store');
     res.setHeader('Pragma', 'no-cache');
   }
   next();
 });
 
-const windowMs = Number(process.env.RATE_LIMIT_WINDOW_MS) || 15 * 60 * 1000;
-const maxRequests = Number(process.env.RATE_LIMIT_MAX_REQUESTS) || 100;
-
 const globalLimiter = rateLimit({
-  windowMs,
-  max: maxRequests,
-  skip: (req) => req.path.startsWith('/health') || /^\/api\/payment\/(webhook\/|notify\/)/.test(req.path),
+  windowMs: config.RATE_LIMIT_WINDOW_MS,
+  max: config.RATE_LIMIT_MAX_REQUESTS,
+  // Les lectures/navigation qui aboutissent ne doivent pas rendre l'interface
+  // inutilisable. Les tentatives en erreur restent comptées, et les limiteurs
+  // auth/paiement conservent leurs politiques strictes séparées.
+  skipSuccessfulRequests: config.RATE_LIMIT_SKIP_SUCCESSFUL_REQUESTS,
+  skip: (req) => req.path.startsWith('/health') || /^\/api\/payment\/webhook\//.test(req.path),
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: 'Trop de requêtes, réessayez plus tard' },
@@ -200,10 +202,11 @@ app.use('/api/sellers', sellerRoutes);
 app.use('/api/account/login', authLimiter);
 app.use('/api/account/register', authLimiter);
 app.use('/api/account', accountRoutes);
-app.use('/api/payment', (req, res, next) => /^\/(webhook\/|notify\/)/.test(req.path) ? next() : paymentLimiter(req, res, next), paymentRoutes);
+app.use('/api/payment', (req, res, next) => /^\/webhook\//.test(req.path) ? next() : paymentLimiter(req, res, next), paymentRoutes);
 app.use('/api/shipping', shippingRoutes);
 app.use('/api/checkout', checkoutRoutes);
 app.use('/api/admin', adminRoutes);
+app.use('/api/support', supportRoutes);
 app.use('/api/contact', contactRoutes);
 app.use('/api/newsletter', contactRoutes);
 
@@ -257,7 +260,6 @@ app.get('/health/ready', async (req, res) => {
 app.get('/health/external', requireOpsToken, (req, res) => {
   res.json({
     stripe: Boolean(process.env.STRIPE_SECRET_KEY),
-    cinetpay: Boolean(process.env.CINETPAY_API_KEY && process.env.CINETPAY_SITE_ID),
     paystack: Boolean(process.env.PAYSTACK_SECRET_KEY),
     cloudinary: Boolean(process.env.CLOUDINARY_CLOUD_NAME),
     email: Boolean(process.env.SMTP_HOST),
@@ -272,7 +274,6 @@ app.get('/api/internal/health', requireOpsToken, async (req, res) => {
     uptime: process.uptime(),
     integrations: {
       stripe: Boolean(process.env.STRIPE_SECRET_KEY),
-      cinetpay: Boolean(process.env.CINETPAY_API_KEY && process.env.CINETPAY_SITE_ID),
       paystack: Boolean(process.env.PAYSTACK_SECRET_KEY),
       cloudinary: Boolean(process.env.CLOUDINARY_CLOUD_NAME),
       email: Boolean(process.env.SMTP_HOST),

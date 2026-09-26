@@ -20,34 +20,32 @@ services:
     container_name: mandemarket-backend
     env_file:
       - .env.production
-    environment:
-      - NODE_ENV=production
-      - TRUST_PROXY=${TRUST_PROXY:?Set the trusted proxy IP/CIDR}
-      - PORT=4002
-      - HOST=0.0.0.0
-      - DATABASE_URL=postgresql://${MANDEMARKET_DB_USER}:${MANDEMARKET_DB_PASSWORD}@mandemarket-db:5432/${MANDEMARKET_DB_NAME}
-      - REDIS_URL=redis://:${MANDEMARKET_REDIS_PASSWORD}@mandemarket-redis:6379
-      - REDIS_PASSWORD=${MANDEMARKET_REDIS_PASSWORD}
-      - JWT_SECRET=${MANDEMARKET_JWT_SECRET}
-      - BCRYPT_ROUNDS=${BCRYPT_ROUNDS:-12}
-      - CORS_ORIGIN=${MANDEMARKET_CORS_ORIGIN}
-      - UPLOAD_DIR=/app/uploads
-      - MAX_FILE_SIZE=${MAX_FILE_SIZE:-5242880}
-      - LOG_LEVEL=${LOG_LEVEL:-info}
-      - LOG_FILE=/app/logs/app.log
-      - RATE_LIMIT_WINDOW_MS=${RATE_LIMIT_WINDOW_MS:-900000}
-      - RATE_LIMIT_MAX_REQUESTS=${RATE_LIMIT_MAX_REQUESTS:-100}
-      - METRICS_TOKEN=${METRICS_TOKEN:?Set a strong METRICS_TOKEN}
-      - CLOUDINARY_CLOUD_NAME=${CLOUDINARY_CLOUD_NAME}
-      - CLOUDINARY_API_KEY=${CLOUDINARY_API_KEY}
-      - CLOUDINARY_API_SECRET=${CLOUDINARY_API_SECRET}
-      - PAYSTACK_SECRET_KEY=${PAYSTACK_SECRET_KEY:-}
-      - PAYSTACK_PUBLIC_KEY=${PAYSTACK_PUBLIC_KEY:-}
-      - CINETPAY_SITE_ID=${CINETPAY_SITE_ID:-}
-      - CINETPAY_API_KEY=${CINETPAY_API_KEY:-}
-      - STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY:-}
-      - STRIPE_PUBLISHABLE_KEY=${STRIPE_PUBLISHABLE_KEY:-}
-      - STRIPE_WEBHOOK_SECRET=${STRIPE_WEBHOOK_SECRET:-}
+    environment: &backend-environment
+      NODE_ENV: production
+      RUN_MIGRATIONS: "true"
+      TRUST_PROXY: ${TRUST_PROXY:?Set the trusted proxy IP/CIDR}
+      PORT: 4002
+      HOST: 0.0.0.0
+      DATABASE_URL: postgresql://${MANDEMARKET_DB_USER}:${MANDEMARKET_DB_PASSWORD}@mandemarket-db:5432/${MANDEMARKET_DB_NAME}
+      REDIS_URL: redis://:${MANDEMARKET_REDIS_PASSWORD}@mandemarket-redis:6379
+      REDIS_PASSWORD: ${MANDEMARKET_REDIS_PASSWORD}
+      JWT_SECRET: ${MANDEMARKET_JWT_SECRET}
+      BCRYPT_ROUNDS: ${BCRYPT_ROUNDS:-12}
+      CORS_ORIGIN: ${MANDEMARKET_CORS_ORIGIN}
+      UPLOAD_DIR: /app/uploads
+      MAX_FILE_SIZE: ${MAX_FILE_SIZE:-5242880}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      LOG_FILE: /app/logs/app.log
+      RATE_LIMIT_WINDOW_MS: ${RATE_LIMIT_WINDOW_MS:-900000}
+      RATE_LIMIT_MAX_REQUESTS: ${RATE_LIMIT_MAX_REQUESTS:-100}
+      METRICS_TOKEN: ${METRICS_TOKEN:?Set a strong METRICS_TOKEN}
+      CLOUDINARY_CLOUD_NAME: ${CLOUDINARY_CLOUD_NAME}
+      CLOUDINARY_API_KEY: ${CLOUDINARY_API_KEY}
+      CLOUDINARY_API_SECRET: ${CLOUDINARY_API_SECRET}
+      PAYSTACK_SECRET_KEY: ${PAYSTACK_SECRET_KEY:-}
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
+      STRIPE_PUBLISHABLE_KEY: ${STRIPE_PUBLISHABLE_KEY:-}
+      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
     volumes:
       - mandemarket_backend_uploads:/app/uploads
       - mandemarket_backend_logs:/app/logs
@@ -94,6 +92,16 @@ services:
     <<: *backend-service
     container_name: mandemarket-worker
     command: ["node", "scripts/worker.js"]
+    environment:
+      <<: *backend-environment
+      RUN_MIGRATIONS: "false"
+    depends_on:
+      mandemarket-db:
+        condition: service_healthy
+      mandemarket-redis:
+        condition: service_healthy
+      mandemarket-backend:
+        condition: service_healthy
     labels:
       - traefik.enable=false
     healthcheck:
@@ -250,4 +258,3 @@ volumes:
   mandemarket_backend_logs:
     name: root_mandemarket_backend_logs
     external: true
-

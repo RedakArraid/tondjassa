@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import Image from 'next/image';
 import Link from 'next/link';
 import { useStore } from './contexts/StoreContext';
@@ -20,6 +20,7 @@ import {
 import { HeartIcon as HeartSolid } from '@heroicons/react/24/solid';
 import { useWishlist } from './hooks/useWishlist';
 import { useCart } from './contexts/CartContext';
+import { ContactService } from './config/api';
 
 const CATEGORY_CARDS = [
   { name: 'Électronique', slug: 'electronique', image: 'https://images.unsplash.com/photo-1593359677879-a4bb92f829d1?w=400&h=400&fit=crop' },
@@ -39,6 +40,29 @@ export default function HomePage() {
   const { getActiveProducts, isHydrated } = useStore();
   const { addItem } = useCart();
   const { isInWishlist, toggle } = useWishlist();
+  const [newsletterEmail, setNewsletterEmail] = useState('');
+  const [newsletterLoading, setNewsletterLoading] = useState(false);
+  const [newsletterMessage, setNewsletterMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
+  const handleNewsletterSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const email = newsletterEmail.trim();
+    if (!email) return;
+    setNewsletterLoading(true);
+    setNewsletterMessage(null);
+    try {
+      await ContactService.subscribeNewsletter(email);
+      setNewsletterEmail('');
+      setNewsletterMessage({ type: 'success', text: 'Merci, votre inscription est confirmée !' });
+    } catch (error) {
+      setNewsletterMessage({
+        type: 'error',
+        text: error instanceof Error ? error.message : 'Inscription impossible pour le moment.',
+      });
+    } finally {
+      setNewsletterLoading(false);
+    }
+  };
 
   const products = useMemo(
     () => (isHydrated ? getActiveProducts().slice(0, 4) : []),
@@ -323,18 +347,32 @@ export default function HomePage() {
             <p className="relative text-white/90 mb-6">Recevez nos offres et bons plans directement par e-mail</p>
             <form
               className="relative flex flex-col sm:flex-row gap-3 max-w-lg mx-auto"
-              onSubmit={(e) => e.preventDefault()}
+              onSubmit={handleNewsletterSubmit}
             >
               <input
                 type="email"
                 required
+                value={newsletterEmail}
+                onChange={(event) => setNewsletterEmail(event.target.value)}
                 placeholder="Votre adresse e-mail"
                 className="flex-1 rounded-xl px-4 py-3.5 outline-none text-brand-navy"
               />
-              <button type="submit" className="bg-brand-navy text-white font-bold px-6 py-3.5 rounded-xl hover:bg-brand-navy-light transition">
-                S&apos;inscrire
+              <button
+                type="submit"
+                disabled={newsletterLoading}
+                className="bg-brand-navy text-white font-bold px-6 py-3.5 rounded-xl hover:bg-brand-navy-light transition disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {newsletterLoading ? 'Inscription…' : 'S’inscrire'}
               </button>
             </form>
+            {newsletterMessage && (
+              <p
+                role="status"
+                className={`relative mt-3 text-sm font-semibold ${newsletterMessage.type === 'success' ? 'text-white' : 'text-red-100'}`}
+              >
+                {newsletterMessage.text}
+              </p>
+            )}
           </div>
         </div>
       </section>

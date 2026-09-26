@@ -33,27 +33,31 @@ model Category {
 
 // ===== VENDEURS (Marketplace) =====
 model Seller {
-  id             String              @id @default(uuid())
-  userId         String              @unique
-  user           User                @relation(fields: [userId], references: [id], onDelete: Cascade)
-  storeName      String
-  slug           String              @unique
-  description    String?
-  logo           String?
-  status         SellerStatus        @default(pending)
-  commissionRate Float               @default(10) // Pourcentage prélevé par la plateforme
-  paymentInfo    Json?               // { method, account, name, phone, iban, ... }
-  totalSales     Int                 @default(0) // CA total (centimes)
-  totalEarnings  Int                 @default(0) // Revenus nets après commission (centimes)
-  rating         Float               @default(0) // Note moyenne (1-5)
-  reviewCount    Int                 @default(0)
-  products       Product[]
-  orderItems     OrderItem[]
-  payouts        SellerPayout[]
-  ledgerEntries  SellerLedgerEntry[]
-  promotions     Promotion[]
-  createdAt      DateTime            @default(now())
-  updatedAt      DateTime            @updatedAt
+  id                     String                        @id @default(uuid())
+  userId                 String                        @unique
+  user                   User                          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  storeName              String
+  slug                   String                        @unique
+  description            String?
+  logo                   String?
+  status                 SellerStatus                  @default(pending)
+  commissionRate         Float                         @default(10) // Pourcentage prélevé par la plateforme
+  paymentInfo            Json? // { method, account, name, phone, iban, ... }
+  totalSales             Int                           @default(0) // CA total (centimes)
+  totalEarnings          Int                           @default(0) // Revenus nets après commission (centimes)
+  rating                 Float                         @default(0) // Note moyenne (1-5)
+  reviewCount            Int                           @default(0)
+  products               Product[]
+  orderItems             OrderItem[]
+  payouts                SellerPayout[]
+  ledgerEntries          SellerLedgerEntry[]
+  promotions             Promotion[]
+  members                SellerMember[]
+  invitations            SellerInvitation[]
+  notificationPreference SellerNotificationPreference?
+  supportTickets         SupportTicket[]               @relation("SellerSupportTickets")
+  createdAt              DateTime                      @default(now())
+  updatedAt              DateTime                      @updatedAt
 
   @@index([status])
   @@index([slug])
@@ -63,13 +67,13 @@ model Seller {
 model Product {
   id          Int           @id @default(autoincrement())
   name        String
-  price       Int           // centimes
+  price       Int // centimes
   categoryId  String
   category    Category      @relation(fields: [categoryId], references: [id])
-  sellerId    String?       // null = produit plateforme (admin), sinon = vendeur
+  sellerId    String? // null = produit plateforme (admin), sinon = vendeur
   seller      Seller?       @relation(fields: [sellerId], references: [id], onDelete: SetNull)
   image       String?
-  images      String[]      // Galerie d'images
+  images      String[] // Galerie d'images
   description String
   stock       Int           @default(0) // Projection maintenue; source de vérité = Inventory
   status      ProductStatus @default(active)
@@ -108,32 +112,38 @@ model Product {
 
 // ===== UTILISATEURS =====
 model User {
-  id                  String               @id @default(uuid())
-  email               String               @unique
-  password            String
-  emailVerifiedAt     DateTime?
-  emailVerificationTokens EmailVerificationToken[]
-  name                String?
-  role                UserRole             @default(user)
-  seller              Seller?
-  customer            Customer?
-  orders              Order[]
-  notifications       Notification[]
-  sessions            Session[]
-  passwordResetTokens PasswordResetToken[]
-  auditLogs           AuditLog[]
-  createdAt           DateTime             @default(now())
-  updatedAt           DateTime             @updatedAt
+  id                        String                   @id @default(uuid())
+  email                     String                   @unique
+  password                  String
+  emailVerifiedAt           DateTime?
+  emailVerificationTokens   EmailVerificationToken[]
+  name                      String?
+  role                      UserRole                 @default(user)
+  seller                    Seller?
+  customer                  Customer?
+  orders                    Order[]
+  notifications             Notification[]
+  sessions                  Session[]
+  passwordResetTokens       PasswordResetToken[]
+  auditLogs                 AuditLog[]
+  sellerMemberships         SellerMember[]
+  sellerInvitationsSent     SellerInvitation[]       @relation("SellerInvitationInviter")
+  sellerInvitationsAccepted SellerInvitation[]       @relation("SellerInvitationAcceptedBy")
+  supportTicketsCreated     SupportTicket[]          @relation("SupportTicketRequester")
+  supportTicketsAssigned    SupportTicket[]          @relation("SupportTicketAssignee")
+  supportMessages           SupportMessage[]
+  createdAt                 DateTime                 @default(now())
+  updatedAt                 DateTime                 @updatedAt
 
   @@index([role])
 }
 
 // ===== CLIENTS =====
 model Customer {
-  id                   String                 @id @default(uuid())
-  userId               String?                @unique
-  user                 User?                  @relation(fields: [userId], references: [id], onDelete: SetNull)
-  email                String                 @unique
+  id                   String                @id @default(uuid())
+  userId               String?               @unique
+  user                 User?                 @relation(fields: [userId], references: [id], onDelete: SetNull)
+  email                String                @unique
   firstName            String
   lastName             String
   phone                String?
@@ -142,11 +152,11 @@ model Customer {
   returnRequests       ReturnRequest[]
   promotionRedemptions PromotionRedemption[]
   reviews              Review[]
-  totalSpent           Int                    @default(0) // centimes
-  loyaltyPoints        Int                    @default(0)
-  status               String                 @default("active")
-  createdAt            DateTime               @default(now())
-  updatedAt            DateTime               @updatedAt
+  totalSpent           Int                   @default(0) // centimes
+  loyaltyPoints        Int                   @default(0)
+  status               String                @default("active")
+  createdAt            DateTime              @default(now())
+  updatedAt            DateTime              @updatedAt
 
   @@index([email])
 }
@@ -212,7 +222,7 @@ model Order {
   shippingCost         Int                   @default(0) // centimes
   taxAmount            Int                   @default(0) // centimes
   discountAmount       Int                   @default(0) // centimes
-  totalAmount          Int                   // centimes
+  totalAmount          Int // centimes
   promotionCode        String?
   customerSnapshot     Json?
   billingAddress       Json?
@@ -241,27 +251,27 @@ model Order {
 // ===== ÉLÉMENTS DE COMMANDE =====
 model OrderItem {
   fulfillmentStatus OrderStatus @default(PENDING)
-  stockCommittedAt DateTime?
-  stockRestoredAt DateTime?
-  carrier String?
-  trackingCode String?
-  id               String   @id @default(uuid())
-  orderId          String
-  order            Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
-  productId        Int
-  product          Product  @relation(fields: [productId], references: [id])
-  sellerId         String?  // Pour commission et dashboard vendeur
-  seller           Seller?  @relation(fields: [sellerId], references: [id], onDelete: SetNull)
-  productSnapshot  Json?
-  selectedVariant  Json?
-  sku              String?
-  quantity         Int
-  unitPrice        Int      // centimes
-  totalPrice       Int      // centimes
-  commissionRate   Float    @default(10)
-  commissionAmount Int      @default(0) // Commission plateforme (centimes)
-  sellerEarnings   Int      @default(0) // Revenus vendeur après commission (centimes)
-  createdAt        DateTime @default(now())
+  stockCommittedAt  DateTime?
+  stockRestoredAt   DateTime?
+  carrier           String?
+  trackingCode      String?
+  id                String      @id @default(uuid())
+  orderId           String
+  order             Order       @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  productId         Int
+  product           Product     @relation(fields: [productId], references: [id])
+  sellerId          String? // Pour commission et dashboard vendeur
+  seller            Seller?     @relation(fields: [sellerId], references: [id], onDelete: SetNull)
+  productSnapshot   Json?
+  selectedVariant   Json?
+  sku               String?
+  quantity          Int
+  unitPrice         Int // centimes
+  totalPrice        Int // centimes
+  commissionRate    Float       @default(10)
+  commissionAmount  Int         @default(0) // Commission plateforme (centimes)
+  sellerEarnings    Int         @default(0) // Revenus vendeur après commission (centimes)
+  createdAt         DateTime    @default(now())
 
   @@index([orderId])
   @@index([productId])
@@ -270,20 +280,100 @@ model OrderItem {
 
 // ===== PAIEMENTS =====
 model Payment {
-  id            String        @id @default(uuid())
-  orderId       String        @unique
-  order         Order         @relation(fields: [orderId], references: [id], onDelete: Cascade)
-  amount        Int           // centimes
-  method        PaymentMethod
-  status        PaymentStatus @default(PENDING)
-  transactionId String?
-  gateway       String?
-  metadata      Json?
-  createdAt     DateTime      @default(now())
-  updatedAt     DateTime      @updatedAt
+  id                   String        @id @default(uuid())
+  orderId              String        @unique
+  order                Order         @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  amount               Int // centimes
+  method               PaymentMethod
+  status               PaymentStatus @default(PENDING)
+  transactionId        String?
+  gateway              String?
+  metadata             Json?
+  processingExpiresAt  DateTime?
+  verificationAttempts Int           @default(0)
+  createdAt            DateTime      @default(now())
+  updatedAt            DateTime      @updatedAt
 
   @@index([status])
   @@index([transactionId])
+  @@index([status, processingExpiresAt])
+}
+
+// ===== EQUIPE BOUTIQUE =====
+model SellerMember {
+  id          String             @id @default(uuid())
+  sellerId    String
+  seller      Seller             @relation(fields: [sellerId], references: [id], onDelete: Cascade)
+  userId      String
+  user        User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role        SellerTeamRole
+  permissions String[]
+  status      SellerMemberStatus @default(active)
+  joinedAt    DateTime           @default(now())
+  createdAt   DateTime           @default(now())
+  updatedAt   DateTime           @updatedAt
+
+  @@unique([sellerId, userId])
+  @@index([userId, status])
+}
+
+model SellerInvitation {
+  id           String                 @id @default(uuid())
+  sellerId     String
+  seller       Seller                 @relation(fields: [sellerId], references: [id], onDelete: Cascade)
+  email        String
+  role         SellerTeamRole
+  permissions  String[]
+  tokenHash    String                 @unique
+  status       SellerInvitationStatus @default(pending)
+  invitedById  String
+  invitedBy    User                   @relation("SellerInvitationInviter", fields: [invitedById], references: [id], onDelete: Cascade)
+  acceptedById String?
+  acceptedBy   User?                  @relation("SellerInvitationAcceptedBy", fields: [acceptedById], references: [id], onDelete: SetNull)
+  expiresAt    DateTime
+  acceptedAt   DateTime?
+  createdAt    DateTime               @default(now())
+  updatedAt    DateTime               @updatedAt
+
+  @@index([sellerId, email, status])
+  @@index([expiresAt, status])
+}
+
+model SellerNotificationPreference {
+  id               String   @id @default(uuid())
+  sellerId         String   @unique
+  seller           Seller   @relation(fields: [sellerId], references: [id], onDelete: Cascade)
+  newOrder         Boolean  @default(true)
+  newMessage       Boolean  @default(true)
+  newReview        Boolean  @default(true)
+  newFollower      Boolean  @default(true)
+  lowStock         Boolean  @default(true)
+  payments         Boolean  @default(true)
+  marketing        Boolean  @default(false)
+  platformMessages Boolean  @default(true)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+}
+
+// Transactional email queue. An API success means "persisted", never "delivered".
+model EmailOutbox {
+  id          String            @id @default(uuid())
+  dedupeKey   String?           @unique
+  recipient   String
+  template    String
+  payload     Json
+  status      EmailOutboxStatus @default(PENDING)
+  attempts    Int               @default(0)
+  maxAttempts Int               @default(5)
+  availableAt DateTime          @default(now())
+  lockedAt    DateTime?
+  sentAt      DateTime?
+  messageId   String?
+  lastError   String?
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+
+  @@index([status, availableAt])
 }
 
 // ===== ÉVÉNEMENTS & WEBHOOKS DE PAIEMENT (MM-BE-040) =====
@@ -332,8 +422,8 @@ model Promotion {
   name        String
   description String
   type        PromotionType
-  value       Int                   // % ou montant fixe en centimes selon type
-  minAmount   Int?                  // seuil min en centimes
+  value       Int // % ou montant fixe en centimes selon type
+  minAmount   Int? // seuil min en centimes
   maxUses     Int?
   usedCount   Int                   @default(0)
   startDate   DateTime
@@ -370,7 +460,7 @@ model Inventory {
   id                String   @id @default(uuid())
   productId         Int      @unique
   product           Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
-  quantity          Int      // Stock physique réel
+  quantity          Int // Stock physique réel
   reserved          Int      @default(0) // Stock réservé en cours de commande
   available         Int      @default(0) // Stock disponible (quantity - reserved)
   lowStockThreshold Int      @default(10)
@@ -389,12 +479,12 @@ model SellerLedgerEntry {
   payoutId     String?
   payout       SellerPayout?      @relation(fields: [payoutId], references: [id], onDelete: SetNull)
   type         SellerLedgerType
-  amount       Int                // Montant en centimes (+ ou -)
+  amount       Int // Montant en centimes (+ ou -)
   feeAmount    Int                @default(0) // Commission plateforme (centimes)
-  netAmount    Int                // Net crédité/débité au vendeur (centimes)
+  netAmount    Int // Net crédité/débité au vendeur (centimes)
   status       SellerLedgerStatus @default(PENDING)
   description  String?
-  balanceAfter Int?               // Projection du solde après opération
+  balanceAfter Int? // Projection du solde après opération
   availableAt  DateTime?
   createdAt    DateTime           @default(now())
 
@@ -409,9 +499,9 @@ model SellerPayout {
   id            String              @id @default(uuid())
   sellerId      String
   seller        Seller              @relation(fields: [sellerId], references: [id], onDelete: Cascade)
-  amount        Int                 // Montant versé (centimes)
+  amount        Int // Montant versé (centimes)
   status        PayoutStatus        @default(pending)
-  method        String?             // bank_transfer, mobile_money, wave, orange_money, mtn
+  method        String? // bank_transfer, mobile_money, wave, orange_money, mtn
   reference     String?
   metadata      Json?
   paidAt        DateTime?
@@ -450,7 +540,7 @@ model Review {
   customer      Customer?    @relation(fields: [customerId], references: [id], onDelete: SetNull)
   customerName  String
   customerEmail String?
-  rating        Int          // 1-5 étoiles
+  rating        Int // 1-5 étoiles
   title         String?
   comment       String
   sellerReply   String?
@@ -461,10 +551,10 @@ model Review {
   createdAt     DateTime     @default(now())
   updatedAt     DateTime     @updatedAt
 
+  @@unique([customerId, productId])
   @@index([productId])
   @@index([status])
   @@index([customerId])
-  @@unique([customerId, productId])
 }
 
 // ===== NOTIFICATIONS =====
@@ -480,6 +570,57 @@ model Notification {
   createdAt DateTime         @default(now())
 
   @@index([userId, isRead])
+}
+
+// ===== SUPPORT CLIENT / VENDEUR =====
+// Les tickets sont des données métier persistantes. AuditLog ne sert qu'à tracer
+// les changements et ne remplace jamais l'historique de conversation.
+model SupportTicket {
+  id             String                @id @default(uuid())
+  reference      String                @unique
+  source         SupportTicketSource
+  category       String                @default("Autre")
+  subject        String
+  status         SupportTicketStatus   @default(OPEN)
+  priority       SupportTicketPriority @default(NORMAL)
+  requesterName  String
+  requesterEmail String
+  requesterPhone String?
+  sellerId       String?
+  seller         Seller?               @relation("SellerSupportTickets", fields: [sellerId], references: [id], onDelete: SetNull)
+  createdById    String?
+  createdBy      User?                 @relation("SupportTicketRequester", fields: [createdById], references: [id], onDelete: SetNull)
+  assignedToId   String?
+  assignedTo     User?                 @relation("SupportTicketAssignee", fields: [assignedToId], references: [id], onDelete: SetNull)
+  messages       SupportMessage[]
+  lastMessageAt  DateTime              @default(now())
+  resolvedAt     DateTime?
+  closedAt       DateTime?
+  createdAt      DateTime              @default(now())
+  updatedAt      DateTime              @updatedAt
+
+  @@index([status, priority])
+  @@index([sellerId, createdAt])
+  @@index([assignedToId, status])
+  @@index([requesterEmail])
+  @@index([lastMessageAt])
+}
+
+model SupportMessage {
+  id         String               @id @default(uuid())
+  ticketId   String
+  ticket     SupportTicket        @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  authorId   String?
+  author     User?                @relation(fields: [authorId], references: [id], onDelete: SetNull)
+  sender     SupportMessageSender
+  authorName String?
+  message    String
+  internal   Boolean              @default(false)
+  createdAt  DateTime             @default(now())
+  updatedAt  DateTime             @updatedAt
+
+  @@index([ticketId, createdAt])
+  @@index([authorId])
 }
 
 // ===== JOURNAL D'AUDIT (MM-BE-022 / MM-INF-091) =====
@@ -521,13 +662,66 @@ enum UserRole {
   customer
   seller
   manager
+  support
   admin
+}
+
+enum SupportTicketSource {
+  SELLER
+  CONTACT
+}
+
+enum SupportTicketStatus {
+  OPEN
+  IN_PROGRESS
+  WAITING_CUSTOMER
+  RESOLVED
+  CLOSED
+}
+
+enum SupportTicketPriority {
+  LOW
+  NORMAL
+  HIGH
+  URGENT
+}
+
+enum SupportMessageSender {
+  REQUESTER
+  STAFF
+  SYSTEM
 }
 
 enum SellerStatus {
   pending
   approved
   suspended
+}
+
+enum SellerTeamRole {
+  manager
+  catalog
+  orders
+  finance
+}
+
+enum SellerMemberStatus {
+  active
+  revoked
+}
+
+enum SellerInvitationStatus {
+  pending
+  accepted
+  revoked
+  expired
+}
+
+enum EmailOutboxStatus {
+  PENDING
+  PROCESSING
+  SENT
+  FAILED
 }
 
 enum ProductStatus {
@@ -630,33 +824,35 @@ enum SellerLedgerStatus {
 }
 
 model EmailVerificationToken {
-  id String @id @default(uuid())
-  userId String
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-  tokenHash String @unique
+  id        String    @id @default(uuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash String    @unique
   expiresAt DateTime
-  usedAt DateTime?
-  createdAt DateTime @default(now())
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
   @@index([userId])
 }
 
 // Full-order refunds only. A request is not a completed provider refund.
 model Refund {
-  id String @id @default(uuid())
-  orderId String @unique
-  order Order @relation(fields: [orderId], references: [id])
-  gateway String
-  transactionId String?
-  amount Int
-  currency String
-  status String @default("REQUESTED")
-  restockRequested Boolean @default(false)
+  id                String    @id @default(uuid())
+  orderId           String    @unique
+  order             Order     @relation(fields: [orderId], references: [id])
+  gateway           String
+  transactionId     String?
+  amount            Int
+  currency          String
+  status            String    @default("REQUESTED")
+  restockRequested  Boolean   @default(false)
   providerReference String?
-  reason String?
-  error String?
-  submittedAt DateTime?
-  completedAt DateTime?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  reason            String?
+  error             String?
+  submittedAt       DateTime?
+  completedAt       DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
   @@index([status])
 }

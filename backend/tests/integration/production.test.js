@@ -24,7 +24,7 @@ beforeAll(async () => {
 afterAll(async () => { await new Promise((resolve) => server.close(resolve)); await db.$disconnect(); });
 beforeEach(async () => {
   jest.restoreAllMocks();
-  await db.$executeRawUnsafe('TRUNCATE TABLE "User", "Customer", "Category", "Promotion", "AuditLog", "PaymentEvent" RESTART IDENTITY CASCADE');
+  await db.$executeRawUnsafe('TRUNCATE TABLE "User", "Customer", "Category", "Promotion", "AuditLog", "PaymentEvent", "EmailOutbox" RESTART IDENTITY CASCADE');
 });
 async function fixture(stock = 10) {
   const buyer = await db.user.create({ data: { email: 'buyer@test.invalid', password: await bcrypt.hash('Buyer-password-123', 4), role: 'customer', emailVerifiedAt: new Date(),
@@ -35,7 +35,7 @@ async function fixture(stock = 10) {
   const product = await db.product.create({ data: { name: 'Product', price: 2000000, description: 'Test', categoryId: category.id,
     sellerId: sellerUser.seller.id, images: [], styles: [], features: [], colors: [], stock,
     inventory: { create: { quantity: stock, available: stock, reserved: 0 } } } });
-  return { buyer, seller: sellerUser.seller, product };
+  return { buyer, seller: sellerUser.seller, sellerUser, product };
 }
 const data = (f, extra = {}) => ({ customerData: { firstName: 'Buyer', lastName: 'Test', email: f.buyer.email },
   addressData: { street: 'Test', city: 'Abidjan', postalCode: '00000', country: 'CI' },
@@ -163,4 +163,100 @@ test('public order reference refuses PII without a capability and works with val
   expect(body.order).not.toHaveProperty('checkoutSecretHash'); expect(body.order).not.toHaveProperty('idempotencyKey');
   expect(body.order.customer.email).toBe(f.buyer.email);
   const status = await fetch(`${base}/api/payment/status/${order.id}`); expect(status.status).toBe(404);
+});
+
+test('CI checkout exposes cash on delivery and Paystack only when configured', async () => {
+  const previous = process.env.PAYSTACK_SECRET_KEY;
+  delete process.env.PAYSTACK_SECRET_KEY;
+  const offline = await fetch(`${base}/api/payment/providers?country=CI`);
+  expect(offline.status).toBe(200);
+  expect((await offline.json()).providers.map((provider) => provider.gateway)).toEqual(['cash_on_delivery']);
+  process.env.PAYSTACK_SECRET_KEY = 'sk_test_integration_paystack_key_12345';
+  const online = await fetch(`${base}/api/payment/providers?country=CI`);
+  const onlineBody = await online.json();
+  expect(onlineBody.providers.map((provider) => provider.gateway)).toEqual(['cash_on_delivery', 'paystack']);
+  expect(onlineBody.enabledCountries).toEqual(['CI', 'FR']);
+  const unsupported = await fetch(`${base}/api/payment/providers?country=SN`);
+  expect(unsupported.status).toBe(422);
+  expect((await unsupported.json()).providers).toEqual([]);
+  if (previous === undefined) delete process.env.PAYSTACK_SECRET_KEY; else process.env.PAYSTACK_SECRET_KEY = previous;
+});
+
+test('a forged checkout cannot reserve stock through an unavailable payment provider', async () => {
+  const previous = process.env.PAYSTACK_SECRET_KEY;
+  delete process.env.PAYSTACK_SECRET_KEY;
+  try {
+    const f = await fixture(1);
+    const response = await fetch(`${base}/api/orders/checkout`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        customer: { firstName: 'Guest', lastName: 'Buyer', email: 'guest@test.invalid' },
+        address: { street: 'Test', city: 'Abidjan', postalCode: '00000', country: 'CI' },
+        items: [{ productId: f.product.id, quantity: 1 }],
+        paymentMethod: 'paystack', shippingMethod: 'PICKUP',
+        idempotencyKey: crypto.randomUUID(), checkoutSecret: crypto.randomBytes(32).toString('hex'),
+      }),
+    });
+    expect(response.status).toBe(422);
+    expect(await db.order.count()).toBe(0);
+    expect(await db.inventory.findUnique({ where: { productId: f.product.id } })).toMatchObject({ reserved: 0, available: 1 });
+  } finally {
+    if (previous === undefined) delete process.env.PAYSTACK_SECRET_KEY;
+    else process.env.PAYSTACK_SECRET_KEY = previous;
+  }
+});
+
+test('a signed Paystack refund reverses a completed payment exactly once', async () => {
+  const f = await fixture(); const { order } = await Orders.checkoutOrder(data(f)); const input = await pay(order);
+  const previous = process.env.PAYSTACK_SECRET_KEY;
+  process.env.PAYSTACK_SECRET_KEY = 'sk_test_integration_paystack_key_12345';
+  const Paystack = require('../../src/services/paystack.service');
+  jest.spyOn(Paystack, 'verifyTransaction').mockResolvedValue({ status: true, data: {
+    status: 'success', amount: order.totalAmount, currency: 'XOF', metadata: { orderId: order.id },
+  } });
+  const event = { event: 'refund.processed', data: { id: 987, transaction_reference: input.transactionId,
+    refund_reference: 'refund-provider-987', amount: String(order.totalAmount), currency: 'XOF' } };
+  const raw = JSON.stringify(event);
+  const signature = crypto.createHmac('sha512', process.env.PAYSTACK_SECRET_KEY).update(raw).digest('hex');
+  const first = await fetch(`${base}/api/payment/webhook/paystack`, { method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'x-paystack-signature': signature }, body: raw });
+  expect(first.status).toBe(200);
+  const second = await fetch(`${base}/api/payment/webhook/paystack`, { method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'x-paystack-signature': signature }, body: raw });
+  expect(second.status).toBe(200);
+  expect(await db.payment.findUnique({ where: { orderId: order.id } })).toMatchObject({ status: 'REFUNDED' });
+  expect(await db.order.findUnique({ where: { id: order.id } })).toMatchObject({ status: 'REFUNDED' });
+  expect(await db.sellerLedgerEntry.count({ where: { orderId: order.id, type: 'SALE_PENDING', status: 'CANCELLED' } })).toBe(1);
+  expect(await db.paymentEvent.count({ where: { orderId: order.id, eventType: 'PROVIDER_REFUND' } })).toBe(1);
+  if (previous === undefined) delete process.env.PAYSTACK_SECRET_KEY; else process.env.PAYSTACK_SECRET_KEY = previous;
+});
+
+test('seller invitations create a durable email and grant only the selected permissions', async () => {
+  const f = await fixture();
+  const collaborator = await db.user.create({ data: { email: 'catalog@test.invalid', password: await bcrypt.hash('Catalog-password-123', 4),
+    name: 'Catalog User', role: 'customer', emailVerifiedAt: new Date(),
+    customer: { create: { email: 'catalog@test.invalid', firstName: 'Catalog', lastName: 'User' } } } });
+  const ownerSession = await Sessions.createSession(f.sellerUser.id, req);
+  const ownerToken = Sessions.generateAccessToken(f.sellerUser, ownerSession.sessionId);
+  const invited = await fetch(`${base}/api/sellers/me/team/invite`, { method: 'POST',
+    headers: { Authorization: `Bearer ${ownerToken}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email: collaborator.email, role: 'catalog' }) });
+  expect(invited.status).toBe(201);
+  const outbox = await db.emailOutbox.findFirst({ where: { recipient: collaborator.email } });
+  expect(outbox).toMatchObject({ status: 'PENDING', template: 'rendered-html' });
+  const invitationToken = outbox.payload.html.match(/#token=([a-f0-9]{64})/)[1];
+  const collaboratorSession = await Sessions.createSession(collaborator.id, req);
+  const collaboratorToken = Sessions.generateAccessToken(collaborator, collaboratorSession.sessionId);
+  const accepted = await fetch(`${base}/api/sellers/invitations/${invitationToken}/accept`, { method: 'POST',
+    headers: { Authorization: `Bearer ${collaboratorToken}` } });
+  expect(accepted.status).toBe(200);
+  const acceptedBody = await accepted.json();
+  expect(acceptedBody).toMatchObject({ success: true, role: 'catalog' });
+  expect(acceptedBody.accessToken).toBeTruthy();
+  const profile = await fetch(`${base}/api/sellers/me/profile`, { headers: { Authorization: `Bearer ${acceptedBody.accessToken}` } });
+  expect(profile.status).toBe(200);
+  expect((await profile.json()).access).toMatchObject({ isOwner: false, role: 'catalog' });
+  const deniedTeam = await fetch(`${base}/api/sellers/me/team`, { headers: { Authorization: `Bearer ${acceptedBody.accessToken}` } });
+  expect(deniedTeam.status).toBe(403);
 });

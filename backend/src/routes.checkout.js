@@ -32,10 +32,14 @@ router.post('/quote', async (req, res) => {
 
 // GET /api/checkout/shipping-options — Options de livraison disponibles
 router.get('/shipping-options', (req, res) => {
-  const country = req.query.country || 'CI';
-  const subtotal = parseInt(req.query.subtotal, 10) || 0;
-  const options = PricingService.getShippingOptions(country, subtotal);
-  res.json({ options });
+  try {
+    const country = req.query.country || 'CI';
+    const subtotal = parseInt(req.query.subtotal, 10) || 0;
+    const options = PricingService.getShippingOptions(country, subtotal);
+    res.json({ options });
+  } catch (err) {
+    res.status(422).json({ error: err.message || 'Livraison indisponible pour ce pays' });
+  }
 });
 
 module.exports = router;

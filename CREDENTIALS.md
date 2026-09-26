@@ -10,7 +10,7 @@
 
 MandeMarket distingue **deux systèmes d'authentification parallèles** :
 
-- **Système backoffice** (admin, seller, manager) → JWT `{userId, role}` → login via `/api/auth/login`
+- **Système backoffice** (admin, seller, manager, support) → JWT `{userId, role}` → login via `/api/auth/login`
 - **Système client** (customer) → JWT `{type:"customer", customerId, userId, email}` → login via `/api/account/login`
 
 ---
@@ -48,11 +48,30 @@ MandeMarket distingue **deux systèmes d'authentification parallèles** :
 - Accès au backoffice en lecture/écriture sur les opérations courantes
 - Gérer les commandes et le suivi des livraisons
 - Modérer les produits et les avis
-- Pas d'accès aux paramètres système ni aux finances
+- Consulter les vendeurs et les demandes de versement sans pouvoir les approuver, rejeter ou modifier
+- Pas d'accès aux paramètres système ni aux actions financières sensibles
 
 ---
 
-## 3. Vendeur
+## 3. Support
+
+| Champ | Valeur |
+|-------|--------|
+| Email | `support@mandemarket.com` |
+| Mot de passe | `Support@2024!` |
+| Rôle | `support` |
+| Interface | `/support/login` |
+| API login | `POST /api/auth/login` |
+
+**Capacités :**
+- Consulter, rechercher et filtrer tous les tickets de support
+- Répondre et modifier le statut ou la priorité d'un ticket
+- S'assigner ou assigner un ticket à un autre agent support actif
+- Aucun accès aux opérations d'administration, de paiement ou de gestion vendeur
+
+---
+
+## 4. Vendeur
 
 | Champ | Valeur |
 |-------|--------|
@@ -78,7 +97,7 @@ MandeMarket distingue **deux systèmes d'authentification parallèles** :
 
 ---
 
-## 4. Client — Côte d'Ivoire
+## 5. Client — Côte d'Ivoire
 
 | Champ | Valeur |
 |-------|--------|
@@ -98,7 +117,7 @@ MandeMarket distingue **deux systèmes d'authentification parallèles** :
 
 ---
 
-## 5. Client — France
+## 6. Client — France
 
 | Champ | Valeur |
 |-------|--------|
@@ -124,6 +143,7 @@ MandeMarket distingue **deux systèmes d'authentification parallèles** :
 |------|-------|-------------|-----------|
 | Admin | admin@mandemarket.com | `Admin@2024!` | `/admin` |
 | Manager | manager@mandemarket.com | `Manager@2024!` | `/admin` |
+| Support | support@mandemarket.com | `Support@2024!` | `/support/login` |
 | Vendeur | vendeur@mandemarket.com | `Vendeur@2024!` | `/vendeur/dashboard` |
 | Client CI | client@mandemarket.com | `Client@2024!` | `/compte/login` |
 | Client FR | client.fr@mandemarket.com | `ClientFR@2024!` | `/compte/login` |
@@ -149,8 +169,7 @@ npm run seed
 
 | Service | Environnement |
 |---------|--------------|
-| Paystack | Test (`sk_test_...`) — carte test : 4084 0840 8408 4081, CVV: 408, exp: 01/26 |
+| Paystack | Test (`sk_test_...`) — carte test : 4084 0840 8408 4081, CVV: 408, expiration future |
 | Stripe | Test (`sk_test_...`) — carte test : 4242 4242 4242 4242, CVV: any, exp: any future |
-| CinetPay | Non configuré (fallback désactivé) |
 
-> Les clés complètes sont dans `backend/.env.docker`.
+> Les clés réelles doivent être renseignées dans un fichier d'environnement local non versionné.

@@ -14,6 +14,13 @@ function FooterLink({ href, children }: { href: string; children: React.ReactNod
   );
 }
 
+const SOCIAL_LINKS = [
+  { name: 'Facebook', href: process.env.NEXT_PUBLIC_FACEBOOK_URL },
+  { name: 'X', href: process.env.NEXT_PUBLIC_X_URL },
+  { name: 'Instagram', href: process.env.NEXT_PUBLIC_INSTAGRAM_URL },
+  { name: 'LinkedIn', href: process.env.NEXT_PUBLIC_LINKEDIN_URL },
+].filter((link): link is { name: string; href: string } => Boolean(link.href));
+
 export default function PublicFooter() {
   const [email, setEmail] = useState('');
   const [loading, setLoading] = useState(false);
@@ -116,21 +123,25 @@ export default function PublicFooter() {
             </ul>
           </div>
 
-          <div>
-            <h4 className="font-bold mb-4 text-white">Suivez-nous</h4>
-            <div className="flex gap-3">
-              {['Facebook', 'X', 'Instagram', 'LinkedIn'].map((name) => (
+          {SOCIAL_LINKS.length > 0 && (
+            <div>
+              <h4 className="font-bold mb-4 text-white">Suivez-nous</h4>
+              <div className="flex gap-3">
+                {SOCIAL_LINKS.map(({ name, href }) => (
                 <a
                   key={name}
-                  href="#"
+                  href={href}
                   aria-label={name}
+                  target="_blank"
+                  rel="noreferrer"
                   className="w-10 h-10 rounded-full bg-white/10 hover:bg-brand-orange flex items-center justify-center text-sm font-bold transition-colors"
                 >
                   {name[0]}
                 </a>
               ))}
+              </div>
             </div>
-          </div>
+          )}
         </div>
       </div>
 

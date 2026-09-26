@@ -51,7 +51,7 @@ Ce document consigne les règles d'architecture fondamentales et non négociable
 ## 4. Intégrité des Paiements
 
 - **Inviolabilité** : Une notification ou redirection navigateur n'est JAMAIS une preuve de paiement.
-- **Validation serveur obligatoire** : Seul un webhook cryptographiquement signé et/ou vérifié directement par appel API serveur-à-serveur auprès du PSP (CinetPay, Paystack, Stripe) peut confirmer un paiement en ligne.
+- **Validation serveur obligatoire** : Seul un webhook cryptographiquement signé et/ou vérifié directement par appel API serveur-à-serveur auprès du PSP (Paystack en Côte d'Ivoire, Stripe en Europe) peut confirmer un paiement en ligne.
 - **Idempotence** : Chaque événement de paiement (`PaymentEvent`) possède une clé d'idempotence unique pour interdire formellement les doubles crédits ou doubles validations sous concurrence.
 - **Atomicité transactionnelle** : La confirmation de paiement, la mise à jour de la commande, la sortie d'inventaire et la génération des écritures comptables vendeur sont exécutées au sein d'une seule et même transaction PostgreSQL (`$transaction`).
 

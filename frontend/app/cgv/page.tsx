@@ -59,11 +59,10 @@ export default function CGVPage() {
               <p className="text-gray-700 leading-relaxed mb-6">
                 Le paiement peut s'effectuer par :
               </p>
-              <ul className="list-disc list-inside text-gray-700 mb-6 space-y-2">
-                <li>Espèces à la livraison</li>
-                <li>Virement bancaire</li>
-                <li>Mobile Money (Orange Money, MTN Money, Moov Money)</li>
-              </ul>
+              <p className="text-gray-700 leading-relaxed mb-6">
+                Les moyens de paiement effectivement disponibles sont affichés lors de la commande selon le pays de livraison.
+                Le paiement à la livraison n’est proposé que lorsqu’il est autorisé pour la commande.
+              </p>
               <p className="text-gray-700 leading-relaxed mb-6">
                 Le paiement est exigible immédiatement à la commande ou à la livraison selon le mode choisi.
               </p>
@@ -125,4 +124,3 @@ export default function CGVPage() {
     </div>
   );
 }
-

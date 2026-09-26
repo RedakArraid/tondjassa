@@ -20,7 +20,10 @@ const signupSchema = z.object({
 const signupSellerSchema = z.object({
   email: z.string().email('Format email invalide').toLowerCase().trim(),
   password: passwordRule,
-  name: z.string().min(2).trim(),
+  name: z.preprocess(
+    (value) => typeof value === 'string' && value.trim() === '' ? undefined : value,
+    z.string().trim().min(2).optional(),
+  ),
   storeName: z.string().min(2).max(100).trim(),
   slug: z.string().min(2).max(50).optional(),
   description: z.string().max(500).optional(),
@@ -71,7 +74,7 @@ router.post('/signup-seller', async (req, res) => {
         data: {
           email: data.email,
           password: hash,
-          name: data.name,
+          name: data.name || data.storeName,
           role: 'seller',
         },
       });

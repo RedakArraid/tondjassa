@@ -5,8 +5,11 @@ import { useSearchParams } from 'next/navigation';
 import { SellerService } from '../../../../config/api';
 import { Spinner } from '../../_components/sections';
 import { SellerPageHeader, SellerCard, SellerEmptyState } from '../../_components/ui';
+import { useSellerAccess } from '../../_components/access';
 
 function MessagesContent() {
+  const { can } = useSellerAccess();
+  const canWrite = can('orders.write');
   const searchParams = useSearchParams();
   const prefilledCustomer = searchParams?.get('customer') || '';
 
@@ -129,7 +132,7 @@ function MessagesContent() {
             {selectedCustomer ? `Écrire à ${selectedCustomer.name || selectedCustomer.email}` : 'Sélectionnez un client'}
           </h3>
           <SellerCard>
-            {selectedCustomer ? (
+            {selectedCustomer && canWrite ? (
               <form onSubmit={handleSendMessage} className="space-y-4">
                 <div className="bg-gray-50 p-3 rounded-xl border border-gray-100 flex items-center justify-between text-xs">
                   <div>
@@ -177,7 +180,7 @@ function MessagesContent() {
               </form>
             ) : (
               <div className="py-16 text-center text-sm text-gray-400">
-                Sélectionnez un client dans la liste de gauche pour composer un message.
+                {canWrite ? 'Sélectionnez un client dans la liste de gauche pour composer un message.' : 'Consultation uniquement : votre rôle ne permet pas d’envoyer des messages.'}
               </div>
             )}
           </SellerCard>

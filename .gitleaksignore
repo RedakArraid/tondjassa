@@ -1,0 +1,2 @@
+# False positive: historical localStorage key name, not a credential.
+81b8d62b7b82c8ba3664f4fd10e84203ad0838e9:frontend/app/vendeur/dashboard/marketing/coupons/page.tsx:generic-api-key:108

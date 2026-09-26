@@ -14,6 +14,7 @@ import {
   HeartIcon, ShareIcon, XMarkIcon,
 } from '@heroicons/react/24/outline';
 import { HeartIcon as HeartIconSolid } from '@heroicons/react/24/solid';
+import { useWishlist } from '../../hooks/useWishlist';
 
 type TabType = 'description' | 'specifications' | 'reviews';
 
@@ -26,12 +27,12 @@ export default function ProductClient({ initialProduct, similarProducts }: Props
   const router = useRouter();
   const { addItem } = useCart();
   const { formatPrice, t } = useRegion();
+  const { isInWishlist, toggle } = useWishlist();
 
   const product = initialProduct;
 
   const [selectedColor, setSelectedColor]         = useState<string | null>(null);
   const [quantity, setQuantity]                   = useState(1);
-  const [isFavorite, setIsFavorite]               = useState(false);
   const [selectedImage, setSelectedImage]         = useState<string | null>(
     product?.image || (product?.images?.[0] ?? null)
   );
@@ -40,6 +41,7 @@ export default function ProductClient({ initialProduct, similarProducts }: Props
   const [showSuccessMessage, setShowSuccessMessage] = useState(false);
 
   const maxQuantity    = product?.stock || 0;
+  const isFavorite = isInWishlist(Number(product?.id));
   const availableColors = product?.colors || [];
   const isNew = product
     ? new Date().getTime() - new Date(product.createdAt).getTime() < 7 * 24 * 60 * 60 * 1000
@@ -125,14 +127,20 @@ export default function ProductClient({ initialProduct, similarProducts }: Props
           {/* ── Images ── */}
           <div className="space-y-4">
             <div className="relative aspect-square bg-white rounded-2xl overflow-hidden shadow-xl border border-gray-200 group">
-              <img
-                src={selectedImage || 'https://images.unsplash.com/photo-1584917865442-de89df76afd3?w=800&h=800&fit=crop'}
-                alt={product.name}
-                className="w-full h-full object-cover cursor-zoom-in"
+              <button
+                type="button"
                 onClick={() => setImageZoom(true)}
-                loading="eager"
-                onError={(e) => { e.currentTarget.src = 'https://images.unsplash.com/photo-1584917865442-de89df76afd3?w=800&h=800&fit=crop'; }}
-              />
+                className="block h-full w-full cursor-zoom-in"
+                aria-label={`Agrandir l’image de ${product.name}`}
+              >
+                <img
+                  src={selectedImage || 'https://images.unsplash.com/photo-1584917865442-de89df76afd3?w=800&h=800&fit=crop'}
+                  alt={product.name}
+                  className="w-full h-full object-cover"
+                  loading="eager"
+                  onError={(e) => { e.currentTarget.src = 'https://images.unsplash.com/photo-1584917865442-de89df76afd3?w=800&h=800&fit=crop'; }}
+                />
+              </button>
 
               {/* Badges */}
               <div className="absolute top-4 left-4 flex flex-col gap-2 z-10">
@@ -161,12 +169,20 @@ export default function ProductClient({ initialProduct, similarProducts }: Props
 
               <div className="absolute bottom-4 right-4 flex gap-2 z-10">
                 <button
-                  onClick={() => setIsFavorite(!isFavorite)}
+                  type="button"
+                  onClick={() => toggle(Number(product.id))}
                   className={`p-3 rounded-full backdrop-blur-sm transition-all shadow-lg ${isFavorite ? 'bg-red-500 text-white' : 'bg-white/90 text-gray-900 hover:bg-white'}`}
+                  aria-label={isFavorite ? 'Retirer des favoris' : 'Ajouter aux favoris'}
                 >
                   {isFavorite ? <HeartIconSolid className="w-5 h-5" /> : <HeartIcon className="w-5 h-5" />}
                 </button>
-                <button onClick={handleShare} className="p-3 bg-white/90 text-gray-900 rounded-full backdrop-blur-sm hover:bg-white transition-all shadow-lg">
+                <button
+                  type="button"
+                  onClick={handleShare}
+                  className="p-3 bg-white/90 text-gray-900 rounded-full backdrop-blur-sm hover:bg-white transition-all shadow-lg"
+                  aria-label="Partager ce produit"
+                  title="Partager"
+                >
                   <ShareIcon className="w-5 h-5" />
                 </button>
               </div>
@@ -177,8 +193,10 @@ export default function ProductClient({ initialProduct, similarProducts }: Props
                 {allImages.map((img, idx) => (
                   <button
                     key={idx}
+                    type="button"
                     onClick={() => setSelectedImage(img)}
                     className={`aspect-square rounded-lg overflow-hidden border-2 transition-all ${selectedImage === img ? 'border-orange-500 shadow-lg scale-105' : 'border-gray-200 hover:border-orange-300'}`}
+                    aria-label={`Afficher l’image ${idx + 1} de ${product.name}`}
                   >
                     <img src={img} alt={`${product.name} ${idx + 1}`} className="w-full h-full object-cover" />
                   </button>
@@ -233,11 +251,11 @@ export default function ProductClient({ initialProduct, similarProducts }: Props
               <label className="block text-sm font-bold text-gray-900 mb-3">{t('product.quantity')}</label>
               <div className="flex items-center gap-4">
                 <div className="flex items-center border-2 border-gray-300 rounded-xl overflow-hidden">
-                  <button onClick={() => handleQuantityChange(-1)} disabled={quantity <= 1} className="p-3 hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed transition-colors">
+                  <button type="button" onClick={() => handleQuantityChange(-1)} disabled={quantity <= 1} className="p-3 hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed transition-colors" aria-label="Diminuer la quantité">
                     <MinusIcon className="w-5 h-5" />
                   </button>
                   <span className="px-6 py-3 text-lg font-bold text-gray-900 min-w-[60px] text-center">{quantity}</span>
-                  <button onClick={() => handleQuantityChange(1)} disabled={quantity >= maxQuantity} className="p-3 hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed transition-colors">
+                  <button type="button" onClick={() => handleQuantityChange(1)} disabled={quantity >= maxQuantity} className="p-3 hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed transition-colors" aria-label="Augmenter la quantité">
                     <PlusIcon className="w-5 h-5" />
                   </button>
                 </div>
@@ -417,7 +435,7 @@ export default function ProductClient({ initialProduct, similarProducts }: Props
       {/* Modal Zoom */}
       {imageZoom && selectedImage && (
         <div className="fixed inset-0 bg-black/90 z-50 flex items-center justify-center p-4" onClick={() => setImageZoom(false)}>
-          <button onClick={() => setImageZoom(false)} className="absolute top-4 right-4 text-white hover:text-gray-300 transition-colors">
+          <button type="button" onClick={() => setImageZoom(false)} className="absolute top-4 right-4 text-white hover:text-gray-300 transition-colors" aria-label="Fermer l’aperçu agrandi">
             <XMarkIcon className="w-8 h-8" />
           </button>
           <img

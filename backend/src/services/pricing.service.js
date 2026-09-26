@@ -1,5 +1,5 @@
 const db = require('../db');
-const { detectRegion, resolveCountryCode, EUR_XOF_RATE } = require('../utils/region');
+const { detectRegion, resolveCountryCode, isCheckoutCountryEnabled, EUR_XOF_RATE } = require('../utils/region');
 
 const SHIPPING_RATES = {
   STANDARD: {
@@ -42,8 +42,7 @@ class PricingService {
 
     country = resolveCountryCode(country);
     if (!country) throw new Error('Pays invalide');
-    const allowed = (process.env.CHECKOUT_COUNTRIES || 'CI,FR,BE,DE,IT,ES,SN,ML,BF,TG,BJ').split(',');
-    if (!allowed.includes(country)) throw new Error('Livraison indisponible pour ce pays');
+    if (!isCheckoutCountryEnabled(country)) throw new Error('Livraison indisponible pour ce pays');
     if (items.length > 100) throw new Error('Panier trop volumineux');
     const validatedItems = [];
     let subtotalAmount = 0;
@@ -209,7 +208,9 @@ class PricingService {
   }
 
   static getShippingOptions(country = 'CI', subtotal = 0) {
-    const normalizedCountry = (country || 'CI').toUpperCase();
+    const normalizedCountry = resolveCountryCode(country);
+    if (!normalizedCountry) throw new Error('Pays invalide');
+    if (!isCheckoutCountryEnabled(normalizedCountry)) throw new Error('Livraison indisponible pour ce pays');
     return Object.keys(SHIPPING_RATES).map((key) => {
       const option = SHIPPING_RATES[key];
       let cost = option.rates[normalizedCountry] ?? option.rates.DEFAULT;

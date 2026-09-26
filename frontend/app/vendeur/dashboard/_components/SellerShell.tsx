@@ -25,6 +25,7 @@ import {
 } from '@heroicons/react/24/outline';
 import { AuthService, SellerService } from '../../../config/api';
 import { SELLER_NAV, findNavItem, type SellerNavItem } from './nav';
+import { SellerAccessProvider } from './access';
 
 const ICONS: Record<SellerNavItem['icon'], React.ElementType> = {
   overview: ChartBarIcon,
@@ -37,16 +38,6 @@ const ICONS: Record<SellerNavItem['icon'], React.ElementType> = {
   store: BuildingStorefrontIcon,
   settings: Cog6ToothIcon,
 };
-
-const NOTIFS = [
-  'Nouvelle commande',
-  'Nouveau follower',
-  'Nouveau message',
-  'Nouvel avis',
-  'Stock faible',
-  'Paiement reçu',
-  'Réponse du Super Admin',
-];
 
 function isNavActive(pathname: string, item: SellerNavItem) {
   if (item.href === '/vendeur/dashboard') return pathname === '/vendeur/dashboard';
@@ -67,11 +58,20 @@ export default function SellerShell({ children }: { children: React.ReactNode })
   const [profile, setProfile] = useState<any>(null);
   const [userEmail, setUserEmail] = useState('');
   const [ready, setReady] = useState(false);
-  const [notifOpen, setNotifOpen] = useState(false);
   const [userOpen, setUserOpen] = useState(false);
-  const notifRef = useRef<HTMLDivElement>(null);
+  const [unreadNotifications, setUnreadNotifications] = useState(0);
   const userRef = useRef<HTMLDivElement>(null);
 
+  const visibleNav = useMemo(() => {
+    const permissions: string[] = profile?.access?.permissions || [];
+    if (permissions.includes('*')) return SELLER_NAV;
+    const permissionBySection: Record<string, string> = {
+      overview: 'dashboard.read', products: 'catalog.read', marketing: 'catalog.read',
+      orders: 'orders.read', comms: 'orders.read', payments: 'finance.read',
+      stats: 'dashboard.read', store: 'settings.read', settings: 'settings.read',
+    };
+    return SELLER_NAV.filter(item => permissions.includes(permissionBySection[item.id]));
+  }, [profile]);
   const activeItem = useMemo(() => findNavItem(pathname || ''), [pathname]);
 
   useEffect(() => {
@@ -84,16 +84,32 @@ export default function SellerShell({ children }: { children: React.ReactNode })
       if (userStr) {
         try {
           const u = JSON.parse(userStr);
-          if (u.role && u.role !== 'seller') {
+          if (u.role === 'admin' || u.role === 'manager') {
             router.push('/admin/dashboard');
+            return;
+          }
+          if (u.role === 'support') {
+            router.push('/support/dashboard');
             return;
           }
           setUserEmail(u.email || '');
         } catch {}
       }
       try {
-        setProfile(await SellerService.getMyProfile());
-      } catch {}
+        const sellerProfile = await SellerService.getMyProfile();
+        setProfile(sellerProfile);
+        if ((sellerProfile?.access?.permissions || []).some((permission: string) => permission === '*' || permission === 'orders.read')) {
+          SellerService.getMyNotifications()
+            .then((items) => {
+              const notifications = Array.isArray(items) ? items : items?.notifications || [];
+              setUnreadNotifications(notifications.filter((notification: any) => !notification.isRead && !notification.readAt).length);
+            })
+            .catch(() => setUnreadNotifications(0));
+        }
+      } catch {
+        router.push('/admin/login');
+        return;
+      }
       setReady(true);
     };
     init();
@@ -101,13 +117,11 @@ export default function SellerShell({ children }: { children: React.ReactNode })
 
   useEffect(() => {
     setSidebarOpen(false);
-    setNotifOpen(false);
     setUserOpen(false);
   }, [pathname]);
 
   useEffect(() => {
     const onDoc = (e: MouseEvent) => {
-      if (notifRef.current && !notifRef.current.contains(e.target as Node)) setNotifOpen(false);
       if (userRef.current && !userRef.current.contains(e.target as Node)) setUserOpen(false);
     };
     document.addEventListener('mousedown', onDoc);
@@ -145,8 +159,19 @@ export default function SellerShell({ children }: { children: React.ReactNode })
       : profile?.status === 'pending'
       ? 'En attente'
       : profile?.status || 'Inconnu';
+  const permissions: string[] = profile?.access?.permissions || [];
+  const can = (permission: string) => permissions.includes('*') || permissions.includes(permission);
+
+  const childPermission = (href: string) => {
+    if (href.includes('/produits/ajouter')) return 'catalog.write';
+    if (href.includes('/marketing/booster')) return 'orders.write';
+    if (href.includes('/paiements/retraits')) return 'finance.write';
+    if (href.includes('/boutique/equipe')) return 'team.manage';
+    return null;
+  };
 
   return (
+    <SellerAccessProvider permissions={permissions} isOwner={Boolean(profile?.access?.isOwner)}>
     <div className="min-h-screen bg-gray-50 flex">
       {sidebarOpen && (
         <div className="fixed inset-0 bg-black/40 z-30 md:hidden" onClick={() => setSidebarOpen(false)} />
@@ -182,7 +207,7 @@ export default function SellerShell({ children }: { children: React.ReactNode })
 
         <nav className="flex-1 overflow-y-auto py-4">
           <ul className="space-y-0.5 px-2">
-            {SELLER_NAV.map((item) => {
+            {visibleNav.map((item) => {
               const Icon = ICONS[item.icon];
               const active = isNavActive(pathname || '', item);
               return (
@@ -220,13 +245,15 @@ export default function SellerShell({ children }: { children: React.ReactNode })
             </div>
 
             <div className="flex items-center gap-1.5 sm:gap-2">
-              <Link
-                href="/vendeur/dashboard/produits/ajouter"
-                className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-brand-orange text-white text-sm font-semibold hover:bg-brand-orange-dark"
-              >
-                <PlusIcon className="w-4 h-4" />
-                <span className="hidden sm:inline">Ajouter un produit</span>
-              </Link>
+              {can('catalog.write') && (
+                <Link
+                  href="/vendeur/dashboard/produits/ajouter"
+                  className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-brand-orange text-white text-sm font-semibold hover:bg-brand-orange-dark"
+                >
+                  <PlusIcon className="w-4 h-4" />
+                  <span className="hidden sm:inline">Ajouter un produit</span>
+                </Link>
+              )}
               <Link
                 href={storeHref}
                 target={profile?.slug ? '_blank' : undefined}
@@ -236,45 +263,30 @@ export default function SellerShell({ children }: { children: React.ReactNode })
                 <span className="hidden md:inline">Voir ma boutique</span>
               </Link>
 
-              <div className="relative" ref={notifRef}>
-                <button
-                  type="button"
-                  onClick={() => { setNotifOpen((v) => !v); setUserOpen(false); }}
-                  className="relative p-2 rounded-lg text-gray-600 hover:bg-gray-100"
-                  aria-label="Notifications"
-                >
-                  <BellIcon className="w-5 h-5" />
-                  <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-brand-orange" />
-                </button>
-                {notifOpen && (
-                  <div className="absolute right-0 mt-2 w-72 bg-white border border-gray-100 rounded-xl shadow-lg overflow-hidden z-50">
-                    <div className="px-4 py-3 border-b border-gray-100 font-semibold text-sm text-brand-navy">
-                      Notifications
-                    </div>
-                    <ul className="max-h-72 overflow-y-auto">
-                      {NOTIFS.map((n) => (
-                        <li key={n} className="px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50 border-b border-gray-50">
-                          {n}
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
-              </div>
+              {can('orders.read') && <Link
+                href="/vendeur/dashboard/notifications"
+                className="relative p-2 rounded-lg text-gray-600 hover:bg-gray-100"
+                aria-label={`${unreadNotifications} notification${unreadNotifications > 1 ? 's' : ''} non lue${unreadNotifications > 1 ? 's' : ''}`}
+              >
+                <BellIcon className="w-5 h-5" />
+                {unreadNotifications > 0 && <span className="absolute right-0.5 top-0.5 min-w-4 rounded-full bg-red-600 px-1 text-center text-[10px] font-bold leading-4 text-white">{unreadNotifications > 99 ? '99+' : unreadNotifications}</span>}
+              </Link>}
 
-              <Link
+              {can('orders.read') && <Link
                 href="/vendeur/dashboard/communication/messages"
                 className="p-2 rounded-lg text-gray-600 hover:bg-gray-100"
                 aria-label="Messages"
               >
                 <ChatBubbleLeftRightIcon className="w-5 h-5" />
-              </Link>
+              </Link>}
 
               <div className="relative" ref={userRef}>
                 <button
                   type="button"
-                  onClick={() => { setUserOpen((v) => !v); setNotifOpen(false); }}
+                  onClick={() => setUserOpen((v) => !v)}
                   className="flex items-center gap-2 p-1.5 sm:px-2 sm:py-1.5 rounded-lg hover:bg-gray-100"
+                  aria-label="Ouvrir le menu du compte vendeur"
+                  aria-expanded={userOpen}
                 >
                   <UserCircleIcon className="w-6 h-6 text-gray-400" />
                   <span className="hidden lg:block text-sm text-gray-600 max-w-[140px] truncate">{userEmail}</span>
@@ -303,7 +315,10 @@ export default function SellerShell({ children }: { children: React.ReactNode })
         {activeItem && activeItem.children.length > 0 && (
           <div className="bg-white border-b border-gray-200 px-4 md:px-6">
             <div className="flex gap-1 overflow-x-auto py-2">
-              {activeItem.children.map((child) => {
+              {activeItem.children.filter((child) => {
+                const permission = childPermission(child.href);
+                return !permission || can(permission);
+              }).map((child) => {
                 const active = isChildActive(pathname || '', child.href);
                 return (
                   <Link
@@ -326,5 +341,6 @@ export default function SellerShell({ children }: { children: React.ReactNode })
         <div className="flex-1 p-4 md:p-8">{children}</div>
       </main>
     </div>
+    </SellerAccessProvider>
   );
 }

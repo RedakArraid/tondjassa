@@ -28,10 +28,10 @@ function TrackingContent() {
     setLoading(true);
     setError(null);
     try {
-      const res = await api.get(`/shipping/track/${encodeURIComponent(code.trim())}`);
-      setData(res.data);
-    } catch (err: any) {
-      setError(err.response?.data?.error || 'Aucun colis trouvé avec ce numéro de suivi.');
+      const res = await api.get(`/api/shipping/track/${encodeURIComponent(code.trim())}`);
+      setData(res as TrackingData);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Aucun colis trouvé avec ce numéro de suivi.');
       setData(null);
     } finally {
       setLoading(false);

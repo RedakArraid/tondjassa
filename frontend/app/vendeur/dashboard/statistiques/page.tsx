@@ -27,14 +27,45 @@ export default function StatistiquesVentesPage() {
     });
   }, []);
 
+  const periodStart = (() => {
+    if (period === 'Toutes périodes') return null;
+
+    const start = new Date();
+    start.setHours(0, 0, 0, 0);
+    if (period === '7 jours') start.setDate(start.getDate() - 6);
+    if (period === '30 jours') start.setDate(start.getDate() - 29);
+    if (period === '3 mois') start.setMonth(start.getMonth() - 3);
+    if (period === 'Cette année') {
+      start.setMonth(0, 1);
+    }
+    return start;
+  })();
+
+  const periodOrders = periodStart
+    ? orders.filter((order) => {
+        const createdAt = new Date(order.createdAt);
+        return !Number.isNaN(createdAt.getTime()) && createdAt >= periodStart;
+      })
+    : orders;
+  const revenueOrders = periodOrders.filter((order) => !['CANCELLED', 'REFUNDED'].includes(String(order.status).toUpperCase()));
+  const isAllTime = period === 'Toutes périodes';
+  const totalSales = isAllTime
+    ? (earnings?.totalSales || 0)
+    : revenueOrders.reduce((sum, order) => sum + (order.sellerTotal ?? order.totalAmount ?? 0), 0);
+  const netEarnings = isAllTime
+    ? (earnings?.totalEarnings || 0)
+    : revenueOrders.reduce((sum, order) => sum + (order.sellerEarnings ?? order.sellerTotal ?? order.totalAmount ?? 0), 0);
+  const count = revenueOrders.length;
+  const avgBasket = count > 0 ? Math.round(totalSales / count) : 0;
+  const totalItemsSold = revenueOrders.reduce((sum, order) => (
+    sum + (order.items || []).reduce((itemSum: number, item: any) => itemSum + (item.quantity || 1), 0)
+  ), 0);
+
   const handleExportCsv = () => {
     const headers = ['Métrique', 'Valeur'];
-    const totalSales = earnings?.totalSales || 0;
-    const netEarnings = earnings?.totalEarnings || 0;
-    const count = orders.length;
-    const avgBasket = count > 0 ? Math.round(totalSales / count) : 0;
 
     const rows = [
+      ['Période', period],
       ['Chiffre d’affaires total (FCFA)', Math.round(totalSales / 100)],
       ['Revenus nets vendeur (FCFA)', Math.round(netEarnings / 100)],
       ['Nombre total de commandes', count],
@@ -57,14 +88,6 @@ export default function StatistiquesVentesPage() {
       </div>
     );
   }
-
-  const totalSales = earnings?.totalSales || 0;
-  const netEarnings = earnings?.totalEarnings || 0;
-  const count = orders.length;
-  const avgBasket = count > 0 ? Math.round(totalSales / count) : 0;
-  const totalItemsSold = orders.reduce((sum, o) => {
-    return sum + (o.items || []).reduce((s: number, it: any) => s + (it.quantity || 1), 0);
-  }, 0);
 
   return (
     <div className="space-y-6">
@@ -94,9 +117,9 @@ export default function StatistiquesVentesPage() {
 
       <SellerStatGrid
         items={[
-          { label: 'Chiffre d’affaires', value: fmt(totalSales), hint: 'Volume brut généré' },
-          { label: 'Gains nets', value: fmt(netEarnings), hint: 'Après commission' },
-          { label: 'Commandes', value: String(count), hint: 'Toutes périodes' },
+          { label: 'Chiffre d’affaires', value: fmt(totalSales), hint: `Volume brut · ${period}` },
+          { label: 'Gains nets', value: fmt(netEarnings), hint: `Après commission · ${period}` },
+          { label: 'Commandes', value: String(count), hint: period },
           { label: 'Panier moyen', value: fmt(avgBasket), hint: 'Par commande' },
           { label: 'Articles vendus', value: String(totalItemsSold), hint: 'Unités expédiées' },
         ]}

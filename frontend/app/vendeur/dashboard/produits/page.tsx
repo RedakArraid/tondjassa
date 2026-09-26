@@ -13,6 +13,7 @@ import {
   RowActions,
 } from '../_components/ui';
 import { ArrowDownTrayIcon } from '@heroicons/react/24/outline';
+import { useSellerAccess } from '../_components/access';
 
 function fmt(cents: number) {
   return `${Math.round((cents || 0) / 100).toLocaleString('fr-FR')} FCFA`;
@@ -21,6 +22,8 @@ function fmt(cents: number) {
 const FILTERS = ['Tous', 'Actifs', 'Brouillons', 'Rupture de stock'];
 
 export default function TousLesProduitsPage() {
+  const { can } = useSellerAccess();
+  const canWrite = can('catalog.write');
   const [loading, setLoading] = useState(true);
   const [products, setProducts] = useState<any[]>([]);
   const [filter, setFilter] = useState('Tous');
@@ -176,7 +179,7 @@ export default function TousLesProduitsPage() {
             <FilterChips options={FILTERS} value={filter} onChange={setFilter} />
           </div>
 
-          {selected.size > 0 && (
+          {canWrite && selected.size > 0 && (
             <div className="flex flex-wrap items-center gap-2 p-3 rounded-lg bg-orange-50 border border-orange-200">
               <span className="text-xs font-semibold text-orange-950 mr-2">{selected.size} sélectionné(s)</span>
               <SellerActionButton size="sm" variant="primary" onClick={() => handleBulk('activate')}>
@@ -204,12 +207,12 @@ export default function TousLesProduitsPage() {
           ) : (
             <div className="space-y-3">
               <div className="flex items-center gap-2 text-xs text-gray-500 pb-1 border-b">
-                <input
+                {canWrite && <input
                   type="checkbox"
                   checked={selected.size === filtered.length && filtered.length > 0}
                   onChange={selectAll}
-                />
-                <span>Tout sélectionner ({filtered.length} produits)</span>
+                />}
+                <span>{canWrite ? 'Tout sélectionner' : 'Catalogue'} ({filtered.length} produits)</span>
               </div>
 
               {filtered.map((p) => {
@@ -220,12 +223,12 @@ export default function TousLesProduitsPage() {
                     className="border border-gray-100 hover:border-gray-200 rounded-xl p-4 flex flex-col xl:flex-row xl:items-center gap-4 justify-between transition-colors"
                   >
                     <div className="flex items-start gap-3 min-w-0">
-                      <input
+                      {canWrite && <input
                         type="checkbox"
                         checked={selected.has(p.id)}
                         onChange={() => toggle(p.id)}
                         className="mt-2 rounded"
-                      />
+                      />}
                       {p.image ? (
                         <img src={p.image} alt={p.name} className="w-14 h-14 rounded-lg object-cover border shrink-0" />
                       ) : (
@@ -257,17 +260,17 @@ export default function TousLesProduitsPage() {
                       <SellerActionButton size="sm" variant="primary" href={`/vendeur/dashboard/produits/ajouter?id=${p.id}`}>
                         Modifier
                       </SellerActionButton>
-                      <SellerActionButton size="sm" variant="outline" onClick={() => handleDuplicate(p.id)}>
+                      <SellerActionButton permission="catalog.write" size="sm" variant="outline" onClick={() => handleDuplicate(p.id)}>
                         Dupliquer
                       </SellerActionButton>
-                      <SellerActionButton
+                      <SellerActionButton permission="catalog.write"
                         size="sm"
                         variant="secondary"
                         onClick={() => handleToggleStatus(p.id, p.status)}
                       >
                         {isActive ? 'Désactiver' : 'Activer'}
                       </SellerActionButton>
-                      <SellerActionButton size="sm" variant="danger" onClick={() => handleDelete(p.id)}>
+                      <SellerActionButton permission="catalog.write" size="sm" variant="danger" onClick={() => handleDelete(p.id)}>
                         Supprimer
                       </SellerActionButton>
                     </RowActions>

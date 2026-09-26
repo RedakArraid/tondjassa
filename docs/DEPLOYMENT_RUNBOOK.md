@@ -17,12 +17,15 @@ in this repository deploys to production. Never deploy an unreviewed branch tip.
 - Copy `env.production.example` into an untracked `.env.production` and replace
   every placeholder. Set `MANDEMARKET_CORS_ORIGIN`, `NEXT_PUBLIC_SITE_URL`,
   `BACKEND_URL`, database/Redis credentials, a strong `MANDEMARKET_JWT_SECRET`,
-  Cloudinary and only the payment providers actually contracted and tested.
+  Cloudinary, Paystack for Côte d'Ivoire (XOF) and Stripe for Europe. Both PSPs must be
+  contracted and accepted in sandbox before any live key is installed.
 - `TRUST_PROXY` is an explicit comma-separated list of proxy IPs/CIDRs. Discover
   the actual Traefik path; do not use `true`, a wildcard, or a hop count. Do not
   expose the backend port publicly. Test distinct client IPs behind Traefik.
 - `CHECKOUT_COUNTRIES` is an explicit list such as `CI,FR`. Enable only countries
   for which shipping, tax, currency, returns and the payment contract are validated.
+- The current Paystack adapter is deliberately restricted to `CI`: MandeMarket sends
+  XOF and exposes the Côte d'Ivoire channels (card, MTN, Orange and Wave).
 - The Compose stack uses existing external volumes named `root_mandemarket_*`
   and an existing `traefik_network`. Verify ownership and names before starting.
   Do not create empty replacements for an existing production database.
@@ -49,7 +52,7 @@ dc() { docker compose --env-file .env.production -p mandemarket-prod -f docker-c
 BACKUP_DIR=/secure/backups/tondjassa ./backend/scripts/backup-db.sh
 dc build --pull mandemarket-backend mandemarket-frontend
 # Migration is executed by the backend entrypoint, strictly with migrate deploy.
-dc run --rm --no-deps mandemarket-backend npm run production:preflight
+dc run --rm --no-deps mandemarket-backend node scripts/production-preflight.js
 ```
 
 The preflight command is read-only after entrypoint migration and must succeed.
@@ -78,8 +81,8 @@ cancellation, two sellers shipping independently, offline payment attestation,
 refund confirmation and seller withdrawal reconciliation.
 
 Stripe/Paystack online refunds are confirmed from provider responses, not from a
-button click. CinetPay and offline refunds require a real external refund and an
-administrator attestation with an amount, currency and reference. A timeout remains
+button click. Offline refunds require a real external refund and an administrator
+attestation with an amount, currency and reference. A timeout remains
 UNKNOWN and requires reconciliation; never blindly issue the payment/refund again.
 The worker reconciles pending transactions/refunds and expires uninitiated or
 failed card orders. Configure alerts for its errors and unresolved records.

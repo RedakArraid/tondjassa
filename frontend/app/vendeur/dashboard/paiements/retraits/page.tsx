@@ -10,6 +10,7 @@ import {
   SellerEmptyState,
 } from '../../_components/ui';
 import { BanknotesIcon, CreditCardIcon, CheckCircleIcon } from '@heroicons/react/24/outline';
+import { useSellerAccess } from '../../_components/access';
 
 function fmt(cents: number) {
   return `${Math.round((cents || 0) / 100).toLocaleString('fr-FR')} FCFA`;
@@ -35,6 +36,8 @@ const STATUS_BADGES: Record<string, { label: string; cls: string }> = {
 };
 
 export default function RetraitsPage() {
+  const { can } = useSellerAccess();
+  const canWrite = can('finance.write');
   const [loading, setLoading] = useState(true);
   const [balance, setBalance] = useState<any>(null);
   const [payouts, setPayouts] = useState<any[]>([]);
@@ -105,7 +108,7 @@ export default function RetraitsPage() {
       <SellerPageHeader
         title="Demandes de Retraits"
         description="Transférez vos gains certifiés vers votre compte Mobile Money ou compte bancaire."
-        action={
+        action={canWrite ? (
           <SellerActionButton
             variant="primary"
             onClick={() => {
@@ -115,7 +118,7 @@ export default function RetraitsPage() {
           >
             {showModal ? 'Fermer le formulaire' : '+ Nouveau retrait'}
           </SellerActionButton>
-        }
+        ) : undefined}
       />
 
       {feedback.error && (
@@ -151,7 +154,7 @@ export default function RetraitsPage() {
       </div>
 
       {/* Form modal/accordion */}
-      {showModal && (
+      {canWrite && showModal && (
         <SellerCard title="Initier une nouvelle demande de versement">
           <form onSubmit={handleRequest} className="space-y-4 max-w-xl">
             <div>
@@ -161,7 +164,7 @@ export default function RetraitsPage() {
                 onChange={(e) => setMethod(e.target.value)}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white"
               >
-                <option value="mobile_money">Mobile Money (Wave, Orange, MTN, Moov)</option>
+                <option value="mobile_money">Mobile Money</option>
                 <option value="bank_transfer">Virement bancaire (IBAN / RIB)</option>
               </select>
             </div>

@@ -27,7 +27,7 @@ interface Seller {
   createdAt: string;
 }
 
-export default function SellersManager() {
+export default function SellersManager({ readOnly = false }: { readOnly?: boolean }) {
   const [sellers, setSellers] = useState<Seller[]>([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<'all' | 'pending' | 'approved' | 'suspended'>('all');
@@ -174,7 +174,7 @@ export default function SellersManager() {
                           <EyeIcon className="w-4 h-4" />
                           Voir détails
                         </button>
-                        {s.status === 'pending' && (
+                        {!readOnly && s.status === 'pending' && (
                           <>
                             <button
                               onClick={() => handleApprove(s.id)}
@@ -192,7 +192,7 @@ export default function SellersManager() {
                             </button>
                           </>
                         )}
-                        {s.status === 'approved' && (
+                        {!readOnly && s.status === 'approved' && (
                           <button
                             onClick={() => handleSuspend(s.id)}
                             className="inline-flex items-center gap-1 px-3 py-1.5 bg-red-100 text-red-700 rounded-lg text-sm hover:bg-red-200"
@@ -200,7 +200,7 @@ export default function SellersManager() {
                             Suspendre
                           </button>
                         )}
-                        {s.status === 'suspended' && (
+                        {!readOnly && s.status === 'suspended' && (
                           <button
                             onClick={() => handleApprove(s.id)}
                             className="inline-flex items-center gap-1 px-3 py-1.5 bg-green-100 text-green-700 rounded-lg text-sm hover:bg-green-200"
@@ -233,8 +233,10 @@ export default function SellersManager() {
           <div className="flex items-center justify-between mb-6">
             <h2 className="text-lg font-semibold text-gray-900">Détails du vendeur</h2>
             <button
+              type="button"
               onClick={closeDetail}
               className="p-1.5 rounded-lg text-gray-500 hover:bg-gray-100"
+              aria-label="Fermer le détail du vendeur"
             >
               <XMarkIcon className="w-5 h-5" />
             </button>
@@ -330,7 +332,11 @@ export default function SellersManager() {
             <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">
               Taux de commission (%)
             </h3>
-            <div className="flex gap-2">
+            {readOnly ? (
+              <div className="rounded-lg bg-gray-50 px-3 py-2 text-sm font-semibold text-gray-800">
+                {selectedSeller.commissionRate}% <span className="ml-2 text-xs font-normal text-gray-500">Lecture seule</span>
+              </div>
+            ) : <div className="flex gap-2">
               <input
                 type="number"
                 min={0}
@@ -347,7 +353,7 @@ export default function SellersManager() {
               >
                 {savingCommission ? 'Sauvegarde...' : 'Enregistrer'}
               </button>
-            </div>
+            </div>}
           </div>
 
           {/* Public page link */}

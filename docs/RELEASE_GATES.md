@@ -1,13 +1,14 @@
 # Release gates
 
 Le dépôt produit une preuve de candidat de release uniquement après succès des
-trois gates techniques du workflow CI :
+quatre gates techniques du workflow CI :
 
-1. `Lint, types, unit tests, build and runtime audit`
-2. `PostgreSQL concurrency and security regressions`
-3. `Production Docker images`
+1. `Repository secret scan` (historique Git complet, Gitleaks versionné) ;
+2. `Lint, types, unit tests, build and runtime audit` (dont `npm audit`) ;
+3. `PostgreSQL concurrency and security regressions` ;
+4. `Production Docker images` (dont scan Trivy des images backend/frontend).
 
-Le job `Release candidate evidence` dépend explicitement de ces trois jobs. Son
+Le job `Release candidate evidence` dépend explicitement de ces quatre jobs. Son
 artefact contient le SHA exact, le run GitHub, les versions et des SHA-256 des
 lockfiles, du schéma Prisma, des Dockerfiles et du Compose production. Cet artefact
 n'est pas une autorisation de déployer et ne contient aucun secret.
@@ -21,7 +22,8 @@ et n'impose pas de SLA de latence.
 ## Protection de main
 
 La branche `main` doit être protégée dans les paramètres GitHub avec pull request
-obligatoire et checks requis. Au minimum, exiger les quatre checks CI ci-dessus et,
+obligatoire et checks requis. Au minimum, exiger les cinq checks CI (les quatre
+gates techniques et `Release candidate evidence`) ci-dessus et,
 pour les changements applicatifs, la recette navigateur. Interdire les pushes directs
 et les force-pushes.
 

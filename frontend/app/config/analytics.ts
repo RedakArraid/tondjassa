@@ -7,8 +7,8 @@ export interface AnalyticsData {
     totalOrders: number;
     averageOrderValue: number;
     revenueGrowth: number;
-    dailyRevenue: Array<{ date: string; revenue: number; orders: number }>;
-    monthlyRevenue: Array<{ month: string; revenue: number; orders: number }>;
+    dailyRevenue: Array<{ date?: string; month?: string; revenue: number; orders: number }>;
+    monthlyRevenue: Array<{ date?: string; month?: string; revenue: number; orders: number }>;
     topProducts: Array<{ id: number; name: string; revenue: number; units: number }>;
     revenueByCategory: Array<{ category: string; revenue: number; percentage: number }>;
   };

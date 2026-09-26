@@ -1,7 +1,8 @@
 const PAYSTACK_BASE = 'https://api.paystack.co';
 
 function isConfigured() {
-  return !!process.env.PAYSTACK_SECRET_KEY;
+  const key = process.env.PAYSTACK_SECRET_KEY || '';
+  return /^sk_(?:test|live)_[A-Za-z0-9_-]{8,}$/.test(key) && !/VOTRE|CHANGEZ|xxxx/i.test(key);
 }
 
 function getHeaders() {
@@ -25,7 +26,7 @@ const OPERATOR_SLUG = { mtn_momo: 'mtn', orange_money: 'orange', wave: 'wave' };
  * @param {string} params.email
  * @param {string} params.callbackUrl
  * @param {string} [params.mobilePhone]     — numéro Mobile Money (optionnel)
- * @param {string} [params.operatorGateway] — 'mtn_momo' | 'orange_money' | 'wave' | 'moov_money'
+ * @param {string} [params.operatorGateway] — 'mtn_momo' | 'orange_money' | 'wave'
  */
 async function initializeTransaction({ orderId, amount, email, callbackUrl, operatorGateway, reference }) {
   if (!isConfigured() || /VOTRE|CHANGEZ|xxxx/i.test(process.env.PAYSTACK_SECRET_KEY || '')) {

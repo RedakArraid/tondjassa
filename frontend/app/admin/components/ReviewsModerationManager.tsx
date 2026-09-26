@@ -279,16 +279,20 @@ export default function ReviewsModerationManager() {
               </p>
               <div className="flex gap-2">
                 <button
+                  type="button"
                   disabled={page <= 1}
                   onClick={() => setPage((p) => p - 1)}
                   className="p-2 border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-40"
+                  aria-label="Page précédente des avis"
                 >
                   <ChevronLeftIcon className="w-4 h-4" />
                 </button>
                 <button
+                  type="button"
                   disabled={page >= pagination.pages}
                   onClick={() => setPage((p) => p + 1)}
                   className="p-2 border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-40"
+                  aria-label="Page suivante des avis"
                 >
                   <ChevronRightIcon className="w-4 h-4" />
                 </button>

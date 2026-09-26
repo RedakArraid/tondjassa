@@ -61,6 +61,33 @@ services:
       - mandemarket_network
 
   # ===========================================================================
+  # Mailpit - SMTP local sans relais externe + boîte de réception de test
+  # ===========================================================================
+  mailpit:
+    image: axllent/mailpit:v1.26
+    container_name: mandemarket-mailpit
+    command:
+      - --database
+      - /data/mailpit.db
+      - --smtp-auth-accept-any
+      - --smtp-auth-allow-insecure
+      - --max
+      - "500"
+    ports:
+      - "8025:8025"
+    volumes:
+      - mailpit_data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "/mailpit", "readyz"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - mandemarket_network
+
+  # ===========================================================================
   # Backend Express.js + Prisma
   # ===========================================================================
   backend:
@@ -70,6 +97,14 @@ services:
     container_name: mandemarket-backend
     env_file:
       - ./backend/.env.docker
+    environment: &backend-local-environment
+      RUN_MIGRATIONS: "true"
+      SMTP_HOST: mailpit
+      SMTP_PORT: "1025"
+      SMTP_USER: mandemarket-local
+      SMTP_PASS: mandemarket-local
+      EMAIL_FROM: "MandeMarket local <noreply@mandemarket.test>"
+      ADMIN_EMAIL: support@mandemarket.test
     ports:
       - "4002:4002"
     volumes:
@@ -80,6 +115,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      mailpit:
+        condition: service_healthy
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:4002/health"]
@@ -87,6 +124,43 @@ services:
       timeout: 15s
       retries: 5
       start_period: 90s
+    networks:
+      - mandemarket_network
+
+  # ===========================================================================
+  # Worker - emails transactionnels, rapprochements et tâches différées
+  # ===========================================================================
+  worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: mandemarket-worker
+    command: ["node", "scripts/worker.js"]
+    env_file:
+      - ./backend/.env.docker
+    environment:
+      <<: *backend-local-environment
+      RUN_MIGRATIONS: "false"
+      SEED_DATA: "false"
+    volumes:
+      - ./backend/uploads:/app/uploads
+      - ./backend/logs:/app/logs
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      mailpit:
+        condition: service_healthy
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "node", "-e", "const f=require('fs');process.exit(Date.now()-Number(f.readFileSync('/app/tmp/worker-heartbeat','utf8'))<300000?0:1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 120s
     networks:
       - mandemarket_network
 
@@ -151,3 +225,4 @@ networks:
 volumes:
   postgres_data:
   redis_data:
+  mailpit_data:

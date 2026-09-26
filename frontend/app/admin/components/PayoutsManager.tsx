@@ -14,7 +14,7 @@ interface Payout {
   createdAt: string;
 }
 
-export default function PayoutsManager() {
+export default function PayoutsManager({ readOnly = false }: { readOnly?: boolean }) {
   const [payouts, setPayouts] = useState<Payout[]>([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<'all' | 'pending' | 'processing' | 'completed' | 'failed'>('all');
@@ -137,7 +137,7 @@ export default function PayoutsManager() {
                     {new Date(p.createdAt).toLocaleDateString('fr-FR')}
                   </td>
                   <td className="px-4 py-3 text-right">
-                    {['pending', 'processing'].includes(p.status) && (
+                    {!readOnly && ['pending', 'processing'].includes(p.status) && (
                       <div className="flex gap-2 justify-end">
                         <button
                           onClick={() => {
@@ -167,6 +167,11 @@ export default function PayoutsManager() {
             </tbody>
           </table>
         </div>
+      )}
+      {readOnly && (
+        <p className="rounded-lg border border-blue-200 bg-blue-50 p-3 text-sm text-blue-700">
+          Votre rôle manager autorise la consultation des versements. Leur traitement reste réservé aux administrateurs.
+        </p>
       )}
     </div>
   );

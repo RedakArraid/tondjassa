@@ -1,4 +1,6 @@
 const nodemailer = require('nodemailer');
+const crypto = require('node:crypto');
+const db = require('../db');
 
 const isConfigured = () => !!(process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS);
 
@@ -27,32 +29,56 @@ function escapeHtml(str) {
     .replace(/'/g, '&#039;');
 }
 
-async function sendEmail({ to, subject, html }, maxRetries = 3) {
-  let attempt = 0;
-  let lastError = null;
+async function sendEmail({ to, subject, html, dedupeKey }) {
+  if (typeof to !== 'string' || !to.trim() || typeof subject !== 'string' || !subject.trim() || typeof html !== 'string') {
+    throw new Error('Email invalide');
+  }
+  const data = { recipient: to.trim().toLowerCase(), template: 'rendered-html', payload: { subject, html },
+    ...(dedupeKey ? { dedupeKey } : {}) };
+  const record = dedupeKey
+    ? await db.emailOutbox.upsert({ where: { dedupeKey }, create: data, update: {} })
+    : await db.emailOutbox.create({ data });
+  return { success: true, queued: true, delivered: record.status === 'SENT', status: record.status, outboxId: record.id };
+}
 
-  while (attempt < maxRetries) {
-    attempt++;
+async function deliverEmail({ recipient, payload }) {
+  if (!isConfigured()) throw new Error('SMTP non configure');
+  const info = await createTransporter().sendMail({ from: FROM, to: recipient, subject: payload.subject, html: payload.html });
+  return info.messageId;
+}
+
+async function processOutboxBatch(limit = 25) {
+  const now = new Date();
+  const staleLock = new Date(now.getTime() - 10 * 60000);
+  const jobs = await db.emailOutbox.findMany({ where: { OR: [
+    { status: 'PENDING', availableAt: { lte: now } },
+    { status: 'PROCESSING', lockedAt: { lt: staleLock } },
+  ] }, orderBy: { availableAt: 'asc' }, take: Math.min(100, Math.max(1, limit)) });
+  let sent = 0;
+  let failed = 0;
+  for (const job of jobs) {
+    const claimed = await db.emailOutbox.updateMany({ where: { id: job.id, OR: [
+      { status: 'PENDING', availableAt: { lte: now } }, { status: 'PROCESSING', lockedAt: { lt: staleLock } },
+    ] }, data: { status: 'PROCESSING', lockedAt: now, attempts: { increment: 1 } } });
+    if (claimed.count !== 1) continue;
+    const current = await db.emailOutbox.findUnique({ where: { id: job.id } });
     try {
-      if (!isConfigured()) {
-        if (process.env.NODE_ENV === 'production') return { success: false, error: 'SMTP non configure' };
-        console.log(`[Email] SMTP non configuré - Notification enregistrée: "${subject}" pour ${to}`);
-        return { success: true, simulated: true };
-      }
-      const transporter = createTransporter();
-      const info = await transporter.sendMail({ from: FROM, to, subject, html });
-      console.log(`[Email] Envoyé avec succès (${attempt}/${maxRetries}): "${subject}" → ${to}`);
-      return { success: true, messageId: info.messageId };
-    } catch (err) {
-      lastError = err;
-      console.error(`[Email] Tentative ${attempt}/${maxRetries} échouée pour ${to}: ${err.message}`);
-      if (attempt < maxRetries) {
-        await new Promise((r) => setTimeout(r, attempt * 1000));
-      }
+      const messageId = await deliverEmail(current);
+      await db.emailOutbox.update({ where: { id: job.id }, data: {
+        status: 'SENT', sentAt: new Date(), messageId, lockedAt: null, lastError: null,
+      } });
+      sent++;
+    } catch (error) {
+      const terminal = current.attempts >= current.maxAttempts;
+      const delayMinutes = Math.min(60, 2 ** Math.max(0, current.attempts - 1));
+      await db.emailOutbox.update({ where: { id: job.id }, data: {
+        status: terminal ? 'FAILED' : 'PENDING', lockedAt: null,
+        availableAt: new Date(Date.now() + delayMinutes * 60000), lastError: error.message.slice(0, 500),
+      } });
+      failed++;
     }
   }
-
-  return { success: false, error: lastError?.message };
+  return { claimed: jobs.length, sent, failed };
 }
 
 // Template de base MandeMarket sécurisé
@@ -126,7 +152,7 @@ async function sendOrderConfirmation(customer, order) {
     </div>
   `);
 
-  return sendEmail({ to: customer.email, subject: `Commande #${safeOrderId} enregistree - MandeMarket`, html });
+  return sendEmail({ to: customer.email, subject: `Commande #${safeOrderId} enregistree - MandeMarket`, html, dedupeKey: `order-confirmation:${order.id}` });
 }
 
 // 2. Email: Mise à jour statut commande
@@ -168,7 +194,7 @@ async function sendOrderStatusUpdate(customer, order, newStatus) {
     </div>
   `);
 
-  return sendEmail({ to: customer.email, subject: `Commande #${safeOrderId} : ${label} - MandeMarket`, html });
+  return sendEmail({ to: customer.email, subject: `Commande #${safeOrderId} : ${label} - MandeMarket`, html, dedupeKey: `order-status:${order.id}:${newStatus}` });
 }
 
 // 3. Email: Reçu de paiement sécurisé
@@ -189,7 +215,7 @@ async function sendPaymentReceiptEmail(customer, order, payment) {
     </div>
   `);
 
-  return sendEmail({ to: customer.email, subject: `Reçu de paiement pour la commande #${safeOrderId}`, html });
+  return sendEmail({ to: customer.email, subject: `Reçu de paiement pour la commande #${safeOrderId}`, html, dedupeKey: `payment-receipt:${order.id}` });
 }
 
 // 4. Email: Statut de retour
@@ -209,7 +235,7 @@ async function sendReturnStatusEmail(customer, returnRequest, status) {
     <p>${statusText[status] || 'Votre demande de retour a été mise à jour.'}</p>
   `);
 
-  return sendEmail({ to: customer.email, subject: `Mise à jour de votre retour #${safeId}`, html });
+  return sendEmail({ to: customer.email, subject: `Mise à jour de votre retour #${safeId}`, html, dedupeKey: `return-status:${returnRequest.id}:${status}` });
 }
 
 // 5. Email: Statut versement vendeur (Payout)
@@ -228,7 +254,7 @@ async function sendPayoutStatusEmail(seller, payout, status) {
     <p>${statusText[status] || 'Votre demande de retrait a été actualisée.'}</p>
   `);
 
-  return sendEmail({ to: seller.user?.email || seller.email, subject: `Versement MandeMarket : ${safeAmount} FCFA`, html });
+  return sendEmail({ to: seller.user?.email || seller.email, subject: `Versement MandeMarket : ${safeAmount} FCFA`, html, dedupeKey: `payout-status:${payout.id}:${status}` });
 }
 
 // 6. Email: Bienvenue nouveau client
@@ -244,7 +270,7 @@ async function sendWelcomeEmail(customer) {
       </a>
     </div>
   `);
-  return sendEmail({ to: customer.email, subject: 'Bienvenue sur MandeMarket !', html });
+  return sendEmail({ to: customer.email, subject: 'Bienvenue sur MandeMarket !', html, dedupeKey: `welcome:${customer.id || customer.email}` });
 }
 
 // 7. Email: Approbation vendeur
@@ -260,7 +286,7 @@ async function sendSellerApproval(sellerEmail, sellerName, storeName) {
       </a>
     </div>
   `);
-  return sendEmail({ to: sellerEmail, subject: `Votre boutique ${safeStore} est en ligne ! - MandeMarket`, html });
+  return sendEmail({ to: sellerEmail, subject: `Votre boutique ${safeStore} est en ligne ! - MandeMarket`, html, dedupeKey: `seller-approved:${sellerEmail}` });
 }
 
 // 8. Email: Réinitialisation de mot de passe
@@ -276,7 +302,8 @@ async function sendPasswordResetEmail(email, resetUrl) {
     </div>
     <p style="font-size: 12px; color: #9ca3af;">Si vous n'êtes pas à l'origine de cette demande, vous pouvez ignorer cet email en toute sécurité.</p>
   `);
-  return sendEmail({ to: email, subject: 'Réinitialisation de votre mot de passe - MandeMarket', html });
+  return sendEmail({ to: email, subject: 'Réinitialisation de votre mot de passe - MandeMarket', html,
+    dedupeKey: `password-reset:${crypto.createHash('sha256').update(resetUrl).digest('hex')}` });
 }
 
 // 9. Notification nouveau message de contact
@@ -294,6 +321,25 @@ async function sendContactMessageNotification(data) {
   return sendEmail({ to: adminEmail, subject: `[Contact Support] ${escapeHtml(data.subject)} - ${escapeHtml(data.name)}`, html });
 }
 
+async function sendSupportReply({ to, requesterName, reference, subject, message, replyId }) {
+  const safeReference = escapeHtml(reference);
+  const html = baseTemplate(`
+    <h2 style="color: #111827; margin-top: 0;">Réponse du support MandeMarket</h2>
+    <p>Bonjour ${escapeHtml(requesterName || '')},</p>
+    <p>Notre équipe a répondu à votre demande <strong>${safeReference}</strong> — ${escapeHtml(subject)}.</p>
+    <div style="background: #f9fafb; border-left: 4px solid #16a34a; padding: 16px; margin: 20px 0;">
+      ${escapeHtml(message).replace(/\n/g, '<br>')}
+    </div>
+    <p style="font-size: 12px; color: #6b7280;">Conservez la référence ${safeReference} pour tout échange ultérieur.</p>
+  `);
+  return sendEmail({
+    to,
+    subject: `[${String(reference || '').replace(/[\r\n]/g, ' ').slice(0, 40)}] Réponse du support MandeMarket`,
+    html,
+    dedupeKey: `support-reply:${replyId}`,
+  });
+}
+
 async function sendSellerCustomerMessage({ to, customerName, storeName, subject, message }) {
   const safeStore = escapeHtml(storeName);
   const html = baseTemplate(`
@@ -305,6 +351,22 @@ async function sendSellerCustomerMessage({ to, customerName, storeName, subject,
     <p style="font-size: 12px; color: #6b7280;">Ce message concerne votre relation commerciale avec la boutique ${safeStore} sur MandeMarket.</p>
   `);
   return sendEmail({ to, subject: `[${safeStore}] ${escapeHtml(subject)}`, html });
+}
+
+async function sendSellerInvitation({ to, storeName, role, inviteUrl, invitationId }) {
+  const safeStore = escapeHtml(storeName);
+  const safeRole = escapeHtml(role);
+  const html = baseTemplate(`
+    <h2 style="color: #111827; margin-top: 0;">Invitation à rejoindre ${safeStore}</h2>
+    <p>Vous avez été invité à collaborer sur cette boutique MandeMarket avec le rôle <strong>${safeRole}</strong>.</p>
+    <div style="text-align: center; margin: 30px 0;">
+      <a href="${escapeHtml(inviteUrl)}" class="btn">Accepter l'invitation</a>
+    </div>
+    <p style="font-size: 12px; color: #6b7280;">Ce lien personnel expire dans 7 jours.</p>
+  `);
+  const subjectStore = String(storeName || '').replace(/[\r\n]/g, ' ').slice(0, 100);
+  return sendEmail({ to, subject: `Invitation à rejoindre ${subjectStore} - MandeMarket`, html,
+    dedupeKey: `seller-invitation:${invitationId}` });
 }
 
 // Administrative notification never includes a guest access capability.
@@ -320,13 +382,16 @@ async function sendNewOrderNotification(order) {
     <p>Montant : ${amount} FCFA. Statut : ${status}.</p>
     <p>La reception de cette commande ne constitue pas une preuve de paiement.</p>
     <p><a href="${dashboard}">Ouvrir l'administration</a></p>`);
-  return sendEmail({ to, subject: `Nouvelle commande ${reference} - MandeMarket`, html });
+  return sendEmail({ to, subject: `Nouvelle commande ${reference} - MandeMarket`, html, dedupeKey: `admin-new-order:${order.id}` });
 }
 
 module.exports = {
   sendNewOrderNotification,
   sendSellerCustomerMessage,
+  sendSellerInvitation,
   sendEmail,
+  processOutboxBatch,
+  deliverEmail,
   sendOrderConfirmation,
   sendOrderStatusUpdate,
   sendPaymentReceiptEmail,
@@ -336,4 +401,5 @@ module.exports = {
   sendSellerApproval,
   sendPasswordResetEmail,
   sendContactMessageNotification,
+  sendSupportReply,
 };

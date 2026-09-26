@@ -52,7 +52,6 @@ describe('Observabilité & Healthchecks (MM-INF-091 / MM-INF-092 / MM-QA-090)', 
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(typeof body.stripe).toBe('boolean');
-    expect(typeof body.cinetpay).toBe('boolean');
     expect(typeof body.paystack).toBe('boolean');
     expect(typeof body.cloudinary).toBe('boolean');
     expect(typeof body.email).toBe('boolean');

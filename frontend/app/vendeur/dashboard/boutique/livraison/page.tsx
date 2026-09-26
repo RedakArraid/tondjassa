@@ -4,6 +4,7 @@ import React, { useEffect, useState } from 'react';
 import { SellerService } from '../../../../config/api';
 import { Spinner } from '../../_components/sections';
 import { SellerPageHeader, SellerCard } from '../../_components/ui';
+import { useSellerAccess } from '../../_components/access';
 
 interface ShippingZone {
   id: string;
@@ -20,6 +21,8 @@ const DEFAULT_ZONES: ShippingZone[] = [
 ];
 
 export default function LivraisonPage() {
+  const { can } = useSellerAccess();
+  const canWrite = can('settings.write');
   const [zones, setZones] = useState<ShippingZone[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -92,7 +95,7 @@ export default function LivraisonPage() {
       <SellerPageHeader
         title="Zones et tarifs de livraison"
         description="Configurez les frais et délais d'expédition appliqués aux paniers de vos acheteurs."
-        action={
+        action={canWrite ? (
           <button
             type="button"
             onClick={handleAddZone}
@@ -100,7 +103,7 @@ export default function LivraisonPage() {
           >
             + Ajouter une zone
           </button>
-        }
+        ) : undefined}
       />
 
       {feedback && (
@@ -122,6 +125,7 @@ export default function LivraisonPage() {
                   <input
                     type="text"
                     value={z.name}
+                    disabled={!canWrite}
                     onChange={(e) => handleUpdateZone(idx, 'name', e.target.value)}
                     className="w-full px-3 py-2 border rounded-lg text-sm bg-white"
                   />
@@ -132,6 +136,7 @@ export default function LivraisonPage() {
                   <input
                     type="number"
                     value={z.price}
+                    disabled={!canWrite}
                     onChange={(e) => handleUpdateZone(idx, 'price', e.target.value)}
                     className="w-full px-3 py-2 border rounded-lg text-sm bg-white"
                   />
@@ -142,6 +147,7 @@ export default function LivraisonPage() {
                   <input
                     type="text"
                     value={z.delay}
+                    disabled={!canWrite}
                     onChange={(e) => handleUpdateZone(idx, 'delay', e.target.value)}
                     placeholder="Ex: 24-48h"
                     className="w-full px-3 py-2 border rounded-lg text-sm bg-white"
@@ -153,6 +159,7 @@ export default function LivraisonPage() {
                   <input
                     type="number"
                     value={z.freeFrom}
+                    disabled={!canWrite}
                     onChange={(e) => handleUpdateZone(idx, 'freeFrom', e.target.value)}
                     placeholder="Optionnel"
                     className="w-full px-3 py-2 border rounded-lg text-sm bg-white"
@@ -160,7 +167,7 @@ export default function LivraisonPage() {
                 </div>
               </div>
 
-              <div className="flex justify-end pt-1">
+              {canWrite && <div className="flex justify-end pt-1">
                 <button
                   type="button"
                   onClick={() => handleRemoveZone(z.id)}
@@ -168,11 +175,11 @@ export default function LivraisonPage() {
                 >
                   Supprimer cette zone
                 </button>
-              </div>
+              </div>}
             </div>
           ))}
 
-          <div className="flex items-center justify-between pt-4 border-t">
+          {canWrite && <div className="flex items-center justify-between pt-4 border-t">
             <button
               type="button"
               onClick={handleAddZone}
@@ -189,7 +196,7 @@ export default function LivraisonPage() {
             >
               {saving ? 'Sauvegarde...' : 'Enregistrer la grille'}
             </button>
-          </div>
+          </div>}
         </div>
       </SellerCard>
     </div>

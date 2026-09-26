@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { SellerService } from '../../../../config/api';
 import { Spinner } from '../../_components/sections';
 import { SellerPageHeader, SellerCard, SellerEmptyState } from '../../_components/ui';
+import { useSellerAccess } from '../../_components/access';
 
 function fmt(cents: number) {
   return `${Math.round((cents || 0) / 100).toLocaleString('fr-FR')} FCFA`;
@@ -17,6 +18,8 @@ interface SellerOrdersViewProps {
 }
 
 export default function SellerOrdersView({ title, description, presetStatus }: SellerOrdersViewProps) {
+  const { can } = useSellerAccess();
+  const canWrite = can('orders.write');
   const [loading, setLoading] = useState(true);
   const [orders, setOrders] = useState<any[]>([]);
   const [search, setSearch] = useState('');
@@ -371,7 +374,7 @@ export default function SellerOrdersView({ title, description, presetStatus }: S
                     </button>
 
                     {/* Actions de statut dynamiques selon l'étape */}
-                    {(orderStatus === 'PENDING' || orderStatus === 'CONFIRMED') && (
+                    {canWrite && (orderStatus === 'PENDING' || orderStatus === 'CONFIRMED') && (
                       <button
                         type="button"
                         disabled={isOrderActionLoading}
@@ -382,7 +385,7 @@ export default function SellerOrdersView({ title, description, presetStatus }: S
                       </button>
                     )}
 
-                    {orderStatus === 'PROCESSING' && (
+                    {canWrite && orderStatus === 'PROCESSING' && (
                       <button
                         type="button"
                         disabled={isOrderActionLoading}
@@ -396,7 +399,7 @@ export default function SellerOrdersView({ title, description, presetStatus }: S
                       </button>
                     )}
 
-                    {orderStatus === 'SHIPPED' && (
+                    {canWrite && orderStatus === 'SHIPPED' && (
                       <button
                         type="button"
                         disabled={isOrderActionLoading}
@@ -411,12 +414,12 @@ export default function SellerOrdersView({ title, description, presetStatus }: S
                       </button>
                     )}
 
-                    <Link
+                    {canWrite && <Link
                       href={`/vendeur/dashboard/communication/messages?customer=${encodeURIComponent(o.customer?.email || '')}`}
                       className="px-3 py-1.5 text-xs font-semibold rounded-lg text-brand-navy hover:bg-brand-navy/5 transition"
                     >
                       💬 Message
-                    </Link>
+                    </Link>}
                   </div>
                 </div>
               );

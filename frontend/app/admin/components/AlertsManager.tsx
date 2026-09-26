@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   ExclamationTriangleIcon,
   InformationCircleIcon,
@@ -39,6 +39,32 @@ const AlertsManager: React.FC<AlertsManagerProps> = ({
 }) => {
   const [filter, setFilter] = useState<'all' | 'unread' | 'critical'>('all');
   const [typeFilter, setTypeFilter] = useState<'all' | Alert['type']>('all');
+  const [readAlertIds, setReadAlertIds] = useState<string[]>([]);
+  const [dismissedAlertIds, setDismissedAlertIds] = useState<string[]>([]);
+  const [storageKey, setStorageKey] = useState<string | null>(null);
+
+  useEffect(() => {
+    try {
+      const rawUser = sessionStorage.getItem('admin_user');
+      const user = rawUser ? JSON.parse(rawUser) : null;
+      const identity = user?.id || user?.email || 'staff';
+      const key = `mandemarket_admin_alerts_${identity}`;
+      const saved = JSON.parse(localStorage.getItem(key) || '{}');
+      setReadAlertIds(Array.isArray(saved.read) ? saved.read : []);
+      setDismissedAlertIds(Array.isArray(saved.dismissed) ? saved.dismissed : []);
+      setStorageKey(key);
+    } catch {
+      setStorageKey('mandemarket_admin_alerts_staff');
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!storageKey) return;
+    localStorage.setItem(storageKey, JSON.stringify({
+      read: readAlertIds.slice(-500),
+      dismissed: dismissedAlertIds.slice(-500),
+    }));
+  }, [dismissedAlertIds, readAlertIds, storageKey]);
 
   // Normalisation des alertes réelles issues de l'API /api/dashboard/alerts
   const normalizedAlerts: Alert[] = (() => {
@@ -99,7 +125,25 @@ const AlertsManager: React.FC<AlertsManagerProps> = ({
     return list;
   })();
 
-  const displayAlerts = normalizedAlerts;
+  const displayAlerts = normalizedAlerts
+    .filter((alert) => !dismissedAlertIds.includes(alert.id))
+    .map((alert) => ({ ...alert, isRead: alert.isRead || readAlertIds.includes(alert.id) }));
+
+  const markAsRead = (alertId: string) => {
+    setReadAlertIds((ids) => ids.includes(alertId) ? ids : [...ids, alertId]);
+    onMarkAsRead?.(alertId);
+  };
+
+  const dismiss = (alertId: string) => {
+    setDismissedAlertIds((ids) => ids.includes(alertId) ? ids : [...ids, alertId]);
+    onDismiss?.(alertId);
+  };
+
+  const markAllAsRead = () => {
+    const unreadIds = displayAlerts.filter((alert) => !alert.isRead).map((alert) => alert.id);
+    setReadAlertIds((ids) => Array.from(new Set([...ids, ...unreadIds])));
+    unreadIds.forEach((id) => onMarkAsRead?.(id));
+  };
 
   // Filtrage des alertes
   const filteredAlerts = displayAlerts.filter(alert => {
@@ -270,24 +314,26 @@ const AlertsManager: React.FC<AlertsManagerProps> = ({
                     </div>
                     
                     <div className="flex items-center space-x-1">
-                      {!alert.isRead && onMarkAsRead && (
+                      {!alert.isRead && (
                         <button
-                          onClick={() => onMarkAsRead(alert.id)}
+                          type="button"
+                          onClick={() => markAsRead(alert.id)}
                           className="p-1 text-gray-400 hover:text-gray-600 rounded"
                           title="Marquer comme lu"
+                          aria-label={`Marquer l’alerte « ${alert.title} » comme lue`}
                         >
                           <EyeIcon className="w-4 h-4" />
                         </button>
                       )}
-                      {onDismiss && (
-                        <button
-                          onClick={() => onDismiss(alert.id)}
-                          className="p-1 text-gray-400 hover:text-red-600 rounded"
-                          title="Supprimer"
-                        >
-                          <XCircleIcon className="w-4 h-4" />
-                        </button>
-                      )}
+                      <button
+                        type="button"
+                        onClick={() => dismiss(alert.id)}
+                        className="p-1 text-gray-400 hover:text-red-600 rounded"
+                        title="Supprimer"
+                        aria-label={`Masquer l’alerte « ${alert.title} »`}
+                      >
+                        <XCircleIcon className="w-4 h-4" />
+                      </button>
                     </div>
                   </div>
                 </div>
@@ -311,14 +357,15 @@ const AlertsManager: React.FC<AlertsManagerProps> = ({
             <span className="text-sm text-gray-500">
               {filteredAlerts.filter(a => !a.isRead).length} alertes non lues
             </span>
-            <div className="flex space-x-2">
-              <button className="text-sm text-orange-600 hover:text-orange-700 font-medium">
+            {displayAlerts.some((alert) => !alert.isRead) && (
+              <button
+                type="button"
+                onClick={markAllAsRead}
+                className="text-sm text-orange-600 hover:text-orange-700 font-medium"
+              >
                 Tout marquer comme lu
               </button>
-              <button className="text-sm text-gray-600 hover:text-gray-700 font-medium">
-                Paramètres alertes
-              </button>
-            </div>
+            )}
           </div>
         </div>
       )}

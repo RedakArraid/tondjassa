@@ -23,8 +23,9 @@ describe('Production security regressions', () => {
     expect(() => assertOrderAccess({ headers: { 'x-order-token': token } }, { ...order, id: 'other' })).toThrow();
   });
   test('provider units and currency are explicit', () => {
-    expect(expectedPayment({ totalAmount: 100000, currency: 'XOF' }, 'stripe')).toEqual({ amount: 1000, currency: 'XOF' });
-    expect(expectedPayment({ totalAmount: 100000, currency: 'XOF' }, 'cinetpay')).toEqual({ amount: 100000, currency: 'XOF' });
+    expect(() => expectedPayment({ totalAmount: 100000, currency: 'XOF' }, 'stripe')).toThrow();
+    expect(expectedPayment({ totalAmount: 100000, currency: 'XOF', shippingAddress: { country: 'CI' } }, 'paystack')).toEqual({ amount: 100000, currency: 'XOF' });
+    expect(() => expectedPayment({ totalAmount: 100000, currency: 'XOF', shippingAddress: { country: 'SN' } }, 'paystack')).toThrow();
     expect(expectedPayment({ totalAmount: 655957, currency: 'EUR' }, 'stripe')).toEqual({ amount: 1000, currency: 'EUR' });
     expect(() => expectedPayment({ totalAmount: 100000, currency: 'EUR' }, 'paystack')).toThrow();
   });

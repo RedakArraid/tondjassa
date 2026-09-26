@@ -5,10 +5,13 @@ import Link from 'next/link';
 import { SellerService } from '../../../../config/api';
 import { Spinner } from '../../_components/sections';
 import { SellerPageHeader, SellerCard, SellerEmptyState, FilterChips } from '../../_components/ui';
+import { useSellerAccess } from '../../_components/access';
 
 const FILTERS = ['Tous', '5 étoiles', '4 étoiles', '3 étoiles et moins', 'Sans réponse'];
 
 export default function AvisPage() {
+  const { can } = useSellerAccess();
+  const canWrite = can('orders.write');
   const [filter, setFilter] = useState('Tous');
   const [reviews, setReviews] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -130,7 +133,7 @@ export default function AvisPage() {
                     </div>
                   )}
 
-                  <div className="flex items-center gap-3">
+                  {canWrite && <div className="flex items-center gap-3">
                     <button
                       type="button"
                       onClick={() => {
@@ -141,7 +144,7 @@ export default function AvisPage() {
                     >
                       {hasReply ? 'Modifier ma réponse' : '💬 Répondre publiquement'}
                     </button>
-                  </div>
+                  </div>}
                 </div>
               );
             })}
@@ -150,7 +153,7 @@ export default function AvisPage() {
       </SellerCard>
 
       {/* Modal de réponse */}
-      {replyModalReview && (
+      {canWrite && replyModalReview && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
           <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl space-y-4">
             <div className="flex items-center justify-between border-b pb-3">

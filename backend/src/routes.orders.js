@@ -5,63 +5,70 @@ const { requireAuth, requireRole, optionalAuth } = require('./middleware.auth');
 const db = require('./db');
 const { OrderService } = require('./services/order.service');
 const { assertOrderAccess, publicOrder } = require('./services/order-access.service');
+const { detectRegion, resolveCountryCode } = require('./utils/region');
+const paystackService = require('./services/paystack.service');
+const stripeService = require('./services/stripe.service');
 
 // Schémas de validation
-const orderSchema = z.object({
-  customerId: z.string().uuid(),
-  userId: z.string().uuid().optional(),
-  status: z.enum(['PENDING', 'CONFIRMED', 'PROCESSING', 'SHIPPED', 'DELIVERED', 'CANCELLED', 'REFUNDED']).optional(),
-  totalAmount: z.number().int().positive(),
-  taxAmount: z.number().int().min(0).optional(),
-  shippingCost: z.number().int().min(0).optional(),
-  discountAmount: z.number().int().min(0).optional(),
-  promotionCode: z.string().optional(),
-  notes: z.string().optional(),
-  items: z.array(z.object({
-    productId: z.number().int().positive(),
-    quantity: z.number().int().positive(),
-    unitPrice: z.number().int().positive()
-  }))
-});
-
 const orderUpdateSchema = z.object({
   status: z.enum(['PENDING', 'CONFIRMED', 'PROCESSING', 'SHIPPED', 'DELIVERED', 'CANCELLED', 'REFUNDED']).optional(),
-  notes: z.string().optional()
-});
+  notes: z.string().trim().max(2000).optional()
+}).strict();
 
 // Schéma de validation pour le checkout public
 const checkoutSchema = z.object({
   customer: z.object({
-    firstName: z.string().min(1, 'Le prénom est requis'),
-    lastName: z.string().min(1, 'Le nom est requis'),
+    firstName: z.string().trim().min(1, 'Le prénom est requis').max(100),
+    lastName: z.string().trim().min(1, 'Le nom est requis').max(100),
     email: z.string().email('Email invalide'),
-    phone: z.string().optional().nullable()
-  }),
+    phone: z.string().trim().max(30).optional().nullable()
+  }).strict(),
   address: z.object({
-    street: z.string().min(1, "L'adresse est requise"),
-    city: z.string().min(1, 'La ville est requise'),
-    postalCode: z.string().default('00000'),
-    country: z.string().default("Côte d'Ivoire")
-  }),
+    street: z.string().trim().min(1, "L'adresse est requise").max(250),
+    city: z.string().trim().min(1, 'La ville est requise').max(100),
+    postalCode: z.string().trim().max(20).default('00000'),
+    country: z.string().trim().min(2).max(100).default("Côte d'Ivoire")
+  }).strict(),
   items: z.array(z.object({
     productId: z.number().int().positive(),
-    quantity: z.number().int().positive(),
-    unitPrice: z.number().int().positive().optional(),
-    selectedVariant: z.record(z.any()).optional()
-  })).min(1, 'Au moins un article est requis'),
-  paymentMethod: z.string().default('cash_on_delivery'),
-  shippingMethod: z.string().optional(),
-  promoCode: z.string().optional().nullable(),
+    quantity: z.number().int().min(1).max(99),
+    selectedVariant: z.record(z.union([z.string().max(200), z.number().finite(), z.boolean()])).refine((value) => Object.keys(value).length <= 20).optional()
+  }).strict()).min(1, 'Au moins un article est requis').max(100),
+  paymentMethod: z.enum(['cash_on_delivery', 'stripe', 'paystack', 'wave', 'orange_money', 'mtn_momo']),
+  shippingMethod: z.enum(['STANDARD', 'EXPRESS', 'PICKUP']).optional(),
+  promoCode: z.string().trim().max(50).optional().nullable(),
   idempotencyKey: z.string().uuid(),
   checkoutSecret: z.string().regex(/^[a-f0-9]{64}$/).optional(),
-  notes: z.string().optional().nullable()
-});
+  notes: z.string().trim().max(2000).optional().nullable()
+}).strict();
+
+const listOrdersSchema = z.object({
+  page: z.coerce.number().int().min(1).max(100000).default(1),
+  limit: z.coerce.number().int().min(1).max(100).default(20),
+  status: z.enum(['PENDING', 'CONFIRMED', 'PROCESSING', 'SHIPPED', 'DELIVERED', 'CANCELLED', 'REFUNDED']).optional(),
+  customerId: z.string().uuid().optional(),
+  startDate: z.coerce.date().optional(), endDate: z.coerce.date().optional(),
+  sortBy: z.enum(['createdAt', 'updatedAt', 'totalAmount', 'orderNumber', 'status']).default('createdAt'),
+  sortOrder: z.enum(['asc', 'desc']).default('desc'),
+}).strict();
+const statusUpdateSchema = z.object({
+  status: z.enum(['PENDING', 'CONFIRMED', 'PROCESSING', 'SHIPPED', 'DELIVERED', 'CANCELLED', 'REFUNDED']),
+  reason: z.string().trim().max(1000).optional(),
+}).strict();
 
 // POST checkout public (atomique et idempotent via OrderService - MM-BE-032)
 router.post('/checkout', optionalAuth, async (req, res) => {
   try {
     const data = checkoutSchema.parse(req.body);
     if (!req.user && !data.checkoutSecret) return res.status(400).json({ error: 'Secret de commande invite requis' });
+    const country = resolveCountryCode(data.address.country);
+    const paystackMethods = new Set(['paystack', 'wave', 'orange_money', 'mtn_momo']);
+    const paymentAvailable = (
+      (country === 'CI' && data.paymentMethod === 'cash_on_delivery')
+      || (country === 'CI' && paystackMethods.has(data.paymentMethod) && paystackService.isConfigured())
+      || (detectRegion(country) === 'europe' && data.paymentMethod === 'stripe' && stripeService.isConfigured())
+    );
+    if (!paymentAvailable) return res.status(422).json({ error: 'Moyen de paiement indisponible pour ce pays' });
     const ipAddress = req.ip || req.headers['x-forwarded-for'] || req.socket.remoteAddress;
 
     const { order, isDuplicate } = await OrderService.checkoutOrder({
@@ -78,22 +85,14 @@ router.post('/checkout', optionalAuth, async (req, res) => {
       ipAddress,
     });
 
-    // Envoi asynchrone des emails de confirmation si nouvelle commande
-    if (!isDuplicate) {
-      try {
-        const emailService = require('./services/email.service');
-        const fullCustomer = await db.customer.findUnique({ where: { id: order.customerId } });
-        const fullOrder = await db.order.findUnique({
-          where: { id: order.id },
-          include: { items: { include: { product: { select: { name: true } } } } }
-        });
-        if (fullCustomer && fullOrder) {
-          emailService.sendOrderConfirmation(fullOrder.customerSnapshot || fullCustomer, fullOrder).catch(console.error);
-          emailService.sendNewOrderNotification(fullOrder, fullCustomer).catch(console.error);
-        }
-      } catch (emailErr) {
-        console.error('[Email] Erreur notification:', emailErr.message);
-      }
+    const emailService = require('./services/email.service');
+    const fullCustomer = await db.customer.findUnique({ where: { id: order.customerId } });
+    const fullOrder = await db.order.findUnique({
+      where: { id: order.id }, include: { items: { include: { product: { select: { name: true } } } } },
+    });
+    if (fullCustomer && fullOrder) {
+      await emailService.sendOrderConfirmation(fullOrder.customerSnapshot || fullCustomer, fullOrder);
+      await emailService.sendNewOrderNotification(fullOrder, fullCustomer);
     }
 
     res.status(isDuplicate ? 200 : 201).json({
@@ -189,18 +188,8 @@ router.get('/reference/:orderNumber', optionalAuth, async (req, res) => {
 // GET toutes les commandes avec pagination et filtres
 router.get('/', requireAuth, requireRole(['admin', 'manager']), async (req, res) => {
   try {
-    const { 
-      page = 1, 
-      limit = 20, 
-      status, 
-      customerId, 
-      startDate, 
-      endDate,
-      sortBy = 'createdAt',
-      sortOrder = 'desc'
-    } = req.query;
-
-    const skip = (parseInt(page) - 1) * parseInt(limit);
+    const { page, limit, status, customerId, startDate, endDate, sortBy, sortOrder } = listOrdersSchema.parse(req.query);
+    const skip = (page - 1) * limit;
     
     // Construire les filtres
     const where = {};
@@ -208,8 +197,8 @@ router.get('/', requireAuth, requireRole(['admin', 'manager']), async (req, res)
     if (customerId) where.customerId = customerId;
     if (startDate || endDate) {
       where.createdAt = {};
-      if (startDate) where.createdAt.gte = new Date(startDate);
-      if (endDate) where.createdAt.lte = new Date(endDate);
+      if (startDate) where.createdAt.gte = startDate;
+      if (endDate) where.createdAt.lte = endDate;
     }
 
     // Construire le tri
@@ -232,7 +221,7 @@ router.get('/', requireAuth, requireRole(['admin', 'manager']), async (req, res)
         },
         orderBy,
         skip,
-        take: parseInt(limit)
+        take: limit
       }),
       db.order.count({ where })
     ]);
@@ -240,13 +229,14 @@ router.get('/', requireAuth, requireRole(['admin', 'manager']), async (req, res)
     res.json({
       orders,
       pagination: {
-        page: parseInt(page),
-        limit: parseInt(limit),
+        page,
+        limit,
         total,
-        pages: Math.ceil(total / parseInt(limit))
+        pages: Math.ceil(total / limit)
       }
     });
   } catch (error) {
+    if (error.name === 'ZodError') return res.status(400).json({ error: 'Filtres invalides', details: error.errors });
     console.error('Erreur lors de la récupération des commandes:', error);
     res.status(500).json({ error: 'Erreur serveur' });
   }
@@ -293,10 +283,7 @@ router.post('/', requireAuth, requireRole(['admin', 'manager']), async (req, res
 // PATCH /:id/status - Transition d'état sécurisée via machine d'état (MM-BE-033)
 router.patch('/:id/status', requireAuth, requireRole(['admin', 'manager']), async (req, res) => {
   try {
-    const { status, reason } = req.body;
-    if (!status) {
-      return res.status(400).json({ error: 'Statut requis' });
-    }
+    const { status, reason } = statusUpdateSchema.parse(req.body);
 
     const ipAddress = req.ip || req.headers['x-forwarded-for'] || req.socket.remoteAddress;
     const updatedOrder = await OrderService.transitionOrderStatus(req.params.id, status, {
@@ -305,18 +292,12 @@ router.patch('/:id/status', requireAuth, requireRole(['admin', 'manager']), asyn
       ipAddress,
     });
 
-    // Email de mise à jour statut
-    if (updatedOrder.customer) {
-      try {
-        const emailService = require('./services/email.service');
-        emailService.sendOrderStatusUpdate(updatedOrder.customer, updatedOrder, status).catch(console.error);
-      } catch (emailErr) {
-        console.error('[Email] Erreur statut:', emailErr.message);
-      }
-    }
+    const notificationOrder = await db.order.findUnique({ where: { id: updatedOrder.id }, include: { customer: true, shipping: true } });
+    if (notificationOrder?.customer) await require('./services/email.service').sendOrderStatusUpdate(notificationOrder.customer, notificationOrder, status);
 
     res.json({ success: true, order: updatedOrder });
   } catch (error) {
+    if (error.name === 'ZodError') return res.status(400).json({ error: 'Statut invalide', details: error.errors });
     if (error.statusCode === 409) {
       return res.status(409).json({ error: error.message });
     }
@@ -365,14 +346,9 @@ router.put('/:id', requireAuth, requireRole(['admin', 'manager']), async (req, r
       });
     }
 
-    // Email de mise à jour statut
-    if (data.status && order?.customer) {
-      try {
-        const emailService = require('./services/email.service');
-        emailService.sendOrderStatusUpdate(order.customer, order, data.status).catch(console.error);
-      } catch (emailErr) {
-        console.error('[Email] Erreur statut:', emailErr.message);
-      }
+    if (data.status) {
+      const notificationOrder = await db.order.findUnique({ where: { id: req.params.id }, include: { customer: true, shipping: true } });
+      if (notificationOrder?.customer) await require('./services/email.service').sendOrderStatusUpdate(notificationOrder.customer, notificationOrder, data.status);
     }
 
     res.json(order);
@@ -443,4 +419,4 @@ router.get('/stats/overview', requireAuth, requireRole(['admin', 'manager']), as
   }
 });
 
-module.exports = router; 
+module.exports = router;

@@ -4,8 +4,11 @@ import { useEffect, useState } from 'react';
 import { SellerService } from '../../../config/api';
 import { Spinner } from '../_components/sections';
 import { SellerPageHeader, SellerHeaderActions, SellerActionButton, SellerCard } from '../_components/ui';
+import { useSellerAccess } from '../_components/access';
 
 export default function BoutiqueProfilPage() {
+  const { can } = useSellerAccess();
+  const canWrite = can('settings.write');
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(false);
   const [profile, setProfile] = useState<any>(null);
@@ -34,14 +37,14 @@ export default function BoutiqueProfilPage() {
       <SellerPageHeader title="Profil boutique" description="Informations publiques de votre boutique." action={
         <SellerHeaderActions>
           <SellerActionButton href={storeHref} variant="secondary">Voir ma boutique</SellerActionButton>
-          {!editing ? (
+          {canWrite && (!editing ? (
             <SellerActionButton variant="primary" onClick={() => setEditing(true)}>Modifier</SellerActionButton>
           ) : (
             <>
               <SellerActionButton variant="primary" onClick={async () => { try { await SellerService.updateMyProfile(form); setEditing(false); alert('Enregistré'); } catch(e:any){ alert(e.message);} }}>Enregistrer</SellerActionButton>
               <SellerActionButton variant="outline" onClick={() => setEditing(false)}>Annuler</SellerActionButton>
             </>
-          )}
+          ))}
         </SellerHeaderActions>
       } />
       <SellerCard>

@@ -79,7 +79,7 @@ mkdir -p /app/uploads /app/logs /app/tmp
 
 # Appliquer les migrations Prisma de façon stricte et non-destructive
 echo "Application des migrations Prisma (migrate deploy)..."
-if [ "${RUN_MIGRATIONS:-true}" = "false" ] || npx --no-install prisma migrate deploy; then
+if [ "${RUN_MIGRATIONS:-true}" = "false" ] || /app/node_modules/.bin/prisma migrate deploy; then
     echo "OK: Migrations Prisma appliquées avec succès"
 else
     echo "ERREUR CRITIQUE: Échec de 'prisma migrate deploy'. Arrêt immédiat pour protéger les données."

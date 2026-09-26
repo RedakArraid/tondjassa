@@ -112,6 +112,16 @@ export default function ProductFiltersAmazon({
     setMaxPrice(Math.min(priceStats.max, newMax));
   };
 
+  // Les prix de l'API sont exprimés en centimes de FCFA.
+  const presetPriceRanges = [
+    { min: 0, max: 2_500_000 },
+    { min: 2_500_000, max: 5_000_000 },
+    { min: 5_000_000, max: 10_000_000 },
+    { min: 10_000_000, max: priceStats.max },
+  ]
+    .filter((range) => range.min < priceStats.max)
+    .map((range) => ({ ...range, max: Math.min(range.max, priceStats.max) }));
+
   return (
     <div className="space-y-1">
       
@@ -242,12 +252,7 @@ export default function ProductFiltersAmazon({
           <div className="pb-3 space-y-3">
             {/* Fourchettes de prix prédéfinies */}
             <div className="space-y-1">
-              {[
-                { min: 0, max: 25000 },
-                { min: 25000, max: 50000 },
-                { min: 50000, max: 100000 },
-                { min: 100000, max: priceStats.max }
-              ].map((range, idx) => (
+              {presetPriceRanges.map((range, idx) => (
                 <button
                   key={idx}
                   onClick={() => {
@@ -273,7 +278,7 @@ export default function ProductFiltersAmazon({
                   value={Math.round(minPrice / 100)}
                   onChange={(e) => handleMinPriceChange(Number(e.target.value) * 100)}
                   placeholder="Min"
-                  className="w-20 px-2 py-1 border border-gray-300 rounded text-xs focus:ring-1 focus:ring-orange-500 focus:border-orange-500"
+                  className="min-w-0 flex-1 px-2 py-1 border border-gray-300 rounded text-xs focus:ring-1 focus:ring-orange-500 focus:border-orange-500"
                 />
                 <span className="text-gray-500">à</span>
                 <input
@@ -281,15 +286,10 @@ export default function ProductFiltersAmazon({
                   value={Math.round(maxPrice / 100)}
                   onChange={(e) => handleMaxPriceChange(Number(e.target.value) * 100)}
                   placeholder="Max"
-                  className="w-20 px-2 py-1 border border-gray-300 rounded text-xs focus:ring-1 focus:ring-orange-500 focus:border-orange-500"
+                  className="min-w-0 flex-1 px-2 py-1 border border-gray-300 rounded text-xs focus:ring-1 focus:ring-orange-500 focus:border-orange-500"
                 />
-                <button
-                  onClick={() => {}}
-                  className="px-2 py-1 bg-gray-100 hover:bg-gray-200 rounded text-xs font-medium transition-colors"
-                >
-                  OK
-                </button>
               </div>
+              <p className="mt-1 text-[11px] text-gray-500">Le filtre s’applique automatiquement.</p>
             </div>
           </div>
         )}
@@ -432,4 +432,3 @@ function CategoryNode({
     </div>
   );
 }
-

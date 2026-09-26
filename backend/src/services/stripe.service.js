@@ -1,8 +1,13 @@
 const { xofCentimesToEurCents } = require('../utils/region');
 
+function isConfigured() {
+  const key = process.env.STRIPE_SECRET_KEY || '';
+  return /^sk_(?:test|live)_[A-Za-z0-9]+$/.test(key) && !/VOTRE|CHANGEZ|xxxx|SECRET$/i.test(key);
+}
+
 function getStripe() {
   const key = process.env.STRIPE_SECRET_KEY || '';
-  if (!key || /VOTRE|CHANGEZ|xxxx|SECRET$/i.test(key)) {
+  if (!isConfigured()) {
     throw new Error('Stripe non configuré : renseignez STRIPE_SECRET_KEY (clé sk_test_… réelle) dans .env');
   }
   return require('stripe')(key);
@@ -47,6 +52,7 @@ async function createCheckoutSession({ orderId, amount, customer, successUrl, ca
     client_reference_id: orderId,
     customer_email: customer.email,
     metadata: { orderId, currency: displayCurrency },
+    payment_intent_data: { metadata: { orderId, checkoutSessionPurpose: 'mandemarket_order' } },
   }, { idempotencyKey: idempotencyKey || `checkout-${orderId}` });
 
   return { paymentUrl: session.url, sessionId: session.id };
@@ -57,4 +63,4 @@ async function constructWebhookEvent(body, signature) {
   return stripe.webhooks.constructEvent(body, signature, process.env.STRIPE_WEBHOOK_SECRET || '');
 }
 
-module.exports = { createCheckoutSession, constructWebhookEvent, getStripe };
+module.exports = { createCheckoutSession, constructWebhookEvent, getStripe, isConfigured };
